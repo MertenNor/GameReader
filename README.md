@@ -12,3 +12,6 @@ Key features:
 
 This program relies on Tesseract OCR for text recognition, so ensure Tesseract is installed and correctly configured.
 Tesseract OCR: https://github.com/tesseract-ocr/tesseract
+
+
+![GameReader](https://github.com/user-attachments/assets/138a49e8-53e9-4eb5-9734-9e4755ebed30)
