@@ -1,3 +1,7 @@
+###
+###  I know.. This code is.. well not great, all made with AI, but it works. feel free to make any changes!
+###
+
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox, simpledialog
 from PIL import ImageGrab, Image, ImageTk, ImageEnhance, ImageFilter
