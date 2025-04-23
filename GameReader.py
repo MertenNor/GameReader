@@ -28,8 +28,11 @@ import re  # For version extraction
 
 APP_VERSION = "0.6"
 
-
-
+CHANGELOG = """
+- Fixed bug where saving / loading layout was broken
+- Fixed broken voice selection
+- Now  alerts if there is a new update available.
+"""
 
 
 # Create a StringIO buffer to capture print statements
@@ -552,9 +555,16 @@ def preprocess_image(image, brightness=1.0, contrast=1.0, saturation=1.0, sharpn
 
     return image
 
+def extract_changelog_from_code(code):
+    """Extracts the CHANGELOG string from the code."""
+    match = re.search(r'CHANGELOG\s*=\s*([ru]?)(["\\']{3})(.*?)\2', code, re.DOTALL)
+    if match:
+        return match.group(3).strip()
+    return None
+
 def check_for_update(local_version):
     """
-    Fetch the remote GameReader.py from GitHub, extract version, compare to local_version.
+    Fetch the remote GameReader.py from GitHub, extract version and changelog, compare to local_version.
     If remote version is newer, show a popup.
     """
     GITHUB_RAW_URL = "https://raw.githubusercontent.com/MertenNor/GameReader/main/GameReader.py"
@@ -563,6 +573,7 @@ def check_for_update(local_version):
         if resp.status_code == 200:
             remote_content = resp.text
             remote_version = extract_version_from_code(remote_content)
+            remote_changelog = extract_changelog_from_code(remote_content)
             if remote_version and version_tuple(remote_version) > version_tuple(local_version):
                 # Show popup
                 import tkinter as tk
@@ -573,7 +584,10 @@ def check_for_update(local_version):
                 root = tk._default_root or tk.Tk()
                 if not tk._default_root:
                     root.withdraw()
-                msg = f"A new version of GameReader is available on GitHub!\n\nLocal version: {local_version}\nLatest version: {remote_version}\n\nVisit GitHub to download the update."
+                msg = f"A new version of GameReader is available on GitHub!\n\nLocal version: {local_version}\nLatest version: {remote_version}"
+                if remote_changelog:
+                    msg += f"\n\nWhat's new:\n{remote_changelog}"
+                msg += "\n\nVisit GitHub to download the update."
                 if messagebox.askyesno("Update Available", msg + "\n\nOpen GitHub page now?"):
                     open_github()
     except Exception as e:
