@@ -1512,7 +1512,7 @@ class GameTextReader:
                 return
 
         layout = {
-            "version": "0.5",
+            "version": "0.6", #testing :)
             "bad_word_list": self.bad_word_list.get(),
             "ignore_usernames": self.ignore_usernames_var.get(),
             "ignore_previous": self.ignore_previous_var.get(),
