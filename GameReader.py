@@ -23,6 +23,11 @@ import webbrowser
 import win32api
 import win32ui
 import win32con
+import requests  # For checking updates
+import re  # For version extraction
+
+APP_VERSION = "0.6"
+
 
 
 
@@ -392,6 +397,30 @@ class ImageProcessingWindow:
             self.canvas.itemconfig(self.image_on_canvas, image=self.photo_image)
 
     def save_settings(self):
+        # First, update all settings in the processing_settings dictionary
+        self.settings['brightness'] = self.brightness_var.get()
+        self.settings['contrast'] = self.contrast_var.get()
+        self.settings['saturation'] = self.saturation_var.get()
+        self.settings['sharpness'] = self.sharpness_var.get()
+        self.settings['blur'] = self.blur_var.get()
+        self.settings['hue'] = self.hue_var.get()
+        self.settings['exposure'] = self.exposure_var.get()
+        if self.threshold_enabled_var.get():
+            self.settings['threshold'] = self.threshold_var.get()
+        else:
+            self.settings['threshold'] = None
+        self.settings['threshold_enabled'] = self.threshold_enabled_var.get()
+
+        # Ensure the settings are properly stored in the game_text_reader's processing_settings
+        area_name = self.area_name
+        self.game_text_reader.processing_settings[area_name] = self.settings.copy()
+
+        # Find and enable the preprocess checkbox for this area
+        for area_frame, _, _, area_name_var, preprocess_var, _, _ in self.game_text_reader.areas:
+            if area_name_var.get() == area_name:
+                preprocess_var.set(True)  # Enable the checkbox
+                break
+
         # Check if there's a current layout file
         if not self.game_text_reader.layout_file.get():
             # Create custom dialog
@@ -440,34 +469,15 @@ class ImageProcessingWindow:
             
             if not self.dialog_result:
                 return  # User clicked Cancel
-            # User clicked Save..., proceed with saving
-            
-            
-            
-        self.settings['brightness'] = self.brightness_var.get()
-        self.settings['contrast'] = self.contrast_var.get()
-        self.settings['saturation'] = self.saturation_var.get()
-        self.settings['sharpness'] = self.sharpness_var.get()
-        self.settings['blur'] = self.blur_var.get()
-        self.settings['hue'] = self.hue_var.get()
-        self.settings['exposure'] = self.exposure_var.get()
-        if self.threshold_enabled_var.get():
-            self.settings['threshold'] = self.threshold_var.get()
-        else:
-            self.settings['threshold'] = None
-        self.settings['threshold_enabled'] = self.threshold_enabled_var.get()
-       ## messagebox.showinfo("Settings Saved", "Your Customize settings have been saved successfully.")
-       # Find and enable the preprocess checkbox for this area
-        area_name = self.area_name
-        for area_frame, _, _, area_name_var, preprocess_var, _, _ in self.game_text_reader.areas:
-            if area_name_var.get() == area_name:
-                preprocess_var.set(True)  # Enable the checkbox
-                break
-       
+
+        # Store a reference to game_text_reader before destroying window
+        game_text_reader = self.game_text_reader
+        
+        # Destroy window
         self.window.destroy()
         
-        # Call save_layout from GameTextReader
-        self.game_text_reader.save_layout()
+        # Now that everything is properly synchronized, save the layout
+        game_text_reader.save_layout()
 
     def update_preview(self, *args):
         """Update the preview with current settings and scale"""
@@ -542,10 +552,53 @@ def preprocess_image(image, brightness=1.0, contrast=1.0, saturation=1.0, sharpn
 
     return image
 
+def check_for_update(local_version):
+    """
+    Fetch the remote GameReader.py from GitHub, extract version, compare to local_version.
+    If remote version is newer, show a popup.
+    """
+    GITHUB_RAW_URL = "https://raw.githubusercontent.com/MertenNor/GameReader/main/GameReader.py"
+    try:
+        resp = requests.get(GITHUB_RAW_URL, timeout=5)
+        if resp.status_code == 200:
+            remote_content = resp.text
+            remote_version = extract_version_from_code(remote_content)
+            if remote_version and version_tuple(remote_version) > version_tuple(local_version):
+                # Show popup
+                import tkinter as tk
+                from tkinter import messagebox
+                def open_github():
+                    import webbrowser
+                    webbrowser.open('https://github.com/MertenNor/GameReader')
+                root = tk._default_root or tk.Tk()
+                if not tk._default_root:
+                    root.withdraw()
+                msg = f"A new version of GameReader is available on GitHub!\n\nLocal version: {local_version}\nLatest version: {remote_version}\n\nVisit GitHub to download the update."
+                if messagebox.askyesno("Update Available", msg + "\n\nOpen GitHub page now?"):
+                    open_github()
+    except Exception as e:
+        # Fail silently if no internet or any error
+        pass
+
+def version_tuple(v):
+    """Convert a version string like '0.6.1' to a tuple of ints: (0,6,1)"""
+    return tuple(int(x) for x in v.split('.') if x.isdigit())
+
+def extract_version_from_code(code):
+    """Extracts the version string from APP_VERSION = "x.y" in GameReader.py."""
+    match = re.search(r'APP_VERSION\s*=\s*"([\d.]+)"', code)
+    if match:
+        return match.group(1)
+    return None
+
 class GameTextReader:
     def __init__(self, root):
         self.root = root
-        self.root.title("Game Text Reader v0.5")
+        self.root.title(f"Game Text Reader v{APP_VERSION}")
+        # --- Update check on startup ---
+        local_version = APP_VERSION
+        threading.Thread(target=lambda: check_for_update(local_version), daemon=True).start()
+        # --- End update check ---
         self.root.geometry("950x250")  # Initial window size
         self.layout_file = tk.StringVar()
         self.latest_images = {}  # Use a dictionary to store images for each area
@@ -622,7 +675,7 @@ class GameTextReader:
         try:
             # Use a lower priority for speaking
             self.speaker.Speak(text, 1)  # 1 is SVSFlagsAsync
-            print("Speech started.")
+            print("Speech started.\n--------------------------")
         except Exception as e:
             print(f"Error during speech: {e}")
             self.is_speaking = False
@@ -1275,8 +1328,23 @@ class GameTextReader:
 
     def resize_window(self):
         """Resize the window based on the number of areas."""
-        total_height = sum(area[0].winfo_reqheight() for area in self.areas) + 270  # Add extra padding for bottom space
-        self.root.geometry(f"950x{total_height}")  # Increase width to 950 and set height to total_height
+        # Calculate base height for controls
+        base_height = 270  # Height for main controls, padding, etc.
+        
+        # Calculate height needed for areas
+        area_height = 0
+        for area in self.areas:
+            frame_height = area[0].winfo_reqheight()
+            if frame_height == 1:  # If frame hasn't been rendered yet
+                frame_height = 40  # Estimated height for a single area
+            area_height += frame_height + 10  # Add padding between areas
+        
+        # Calculate total height with minimum size constraint
+        total_height = max(base_height + area_height, 250)  # Minimum height of 250
+        
+        # Update window geometry
+        self.root.geometry(f"950x{total_height}")
+        self.root.update_idletasks()  # Ensure geometry is applied
 
     def set_area(self, frame, area_name_var, set_area_button):
         x1, y1, x2, y2 = 0, 0, 0, 0
@@ -1512,7 +1580,7 @@ class GameTextReader:
                 return
 
         layout = {
-            "version": "0.6", #testing :)
+            "version": APP_VERSION,
             "bad_word_list": self.bad_word_list.get(),
             "ignore_usernames": self.ignore_usernames_var.get(),
             "ignore_previous": self.ignore_previous_var.get(),
@@ -1536,23 +1604,29 @@ class GameTextReader:
                 }
                 layout["areas"].append(area_info)
 
-        # Check if a layout file is currently loaded
+        # Get the current file path and initialdir for the save dialog
         current_file = self.layout_file.get()
-        if current_file:
-            # Use the current file path
-            file_path = current_file
-            print(f"Saving to current layout: {file_path}")
-        else:
-            # If no file is loaded, show Save As dialog
-            file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json")])
-            if not file_path:  # User cancelled
-                return
-            # Update the layout file display with just the filename
-            self.layout_file.set(file_path.split('/')[-1])
+        initial_dir = os.path.dirname(current_file) if current_file else os.getcwd()
+        initial_file = os.path.basename(current_file) if current_file else ""
+
+        # Show Save As dialog with the current file pre-selected
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json")],
+            initialdir=initial_dir,
+            initialfile=initial_file
+        )
+
+        if not file_path:  # User cancelled
+            return
 
         try:
+            # Save the layout
             with open(file_path, 'w') as f:
                 json.dump(layout, f, indent=4)
+            
+            # Store the full path in layout_file
+            self.layout_file.set(file_path)
             
             # Show feedback in status label
             if hasattr(self, '_feedback_timer') and self._feedback_timer:
@@ -1571,8 +1645,17 @@ class GameTextReader:
         file_path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
         if file_path:
             try:
+                # Store the file path before loading
+                self.layout_file.set(file_path)
+                
                 with open(file_path, 'r') as f:
                     layout = json.load(f)
+                    
+                # Clear existing areas and processing settings
+                for area_frame, _, _, _, _, _, _ in self.areas:
+                    area_frame.destroy()
+                self.areas.clear()
+                self.processing_settings.clear()
 
                 save_version = layout.get("version", "0.0")
                 current_version = "0.5"
@@ -1646,60 +1729,44 @@ class GameTextReader:
 
                 # Load all the areas
                 for area_info in layout.get("areas", []):
-                    area_frame = tk.Frame(self.area_frame)
-                    area_frame.pack(pady=(4, 0))
-                    area_name_var = tk.StringVar(value=area_info["name"])
-                    tk.Label(area_frame, textvariable=area_name_var).pack(side="left")
+                    # Create a new area using add_read_area
+                    self.add_read_area()
                     
-                    set_area_button = tk.Button(area_frame, text="Edit Area")
-                    set_area_button.pack(side="left")
-                    set_area_button.config(command=partial(self.set_area, area_frame, area_name_var, set_area_button))
+                    # Get the newly created area (last one in the list)
+                    area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var = self.areas[-1]
                     
-                    tk.Label(area_frame, text="Hotkey:").pack(side="left")
-                    hotkey_button = tk.Button(area_frame, text="Set Hotkey")
-                    hotkey_button.config(command=lambda hb=hotkey_button, af=area_frame: self.set_hotkey(hb, af))
-                    hotkey_button.pack(side="left")
-
-                    if "hotkey" in area_info and area_info["hotkey"]:
-                        hotkey_button.config(text=f"[ {area_info['hotkey']} ]")
-                        hotkey_button.hotkey = area_info["hotkey"]
-                        self.setup_hotkey(hotkey_button, area_frame)
-
-                    preprocess_var = tk.BooleanVar(value=area_info.get("preprocess", False))
-                    preprocess_checkbox = tk.Checkbutton(area_frame, text="Preprocess", variable=preprocess_var)
-                    preprocess_checkbox.pack(side="left")
-
-                    customize_button = tk.Button(area_frame, text="Customize Processing", command=partial(self.customize_processing, area_name_var))
-                    customize_button.pack(side="left")
-
-                    voice_var = tk.StringVar(value=area_info.get("voice", ""))
-                    voice_menu = tk.OptionMenu(area_frame, voice_var, "Select Voice", *[voice.name for voice in self.voices])
-                    voice_menu.pack(side="left")
-
-                    speed_var = tk.StringVar(value=str(int(area_info.get("speed", 100))))
-                    tk.Label(area_frame, text="Speed % :").pack(side="left")
-                    vcmd = (self.root.register(lambda P: self.validate_numeric_input(P, is_speed=True)), '%P')
-                    speed_entry = tk.Entry(area_frame, textvariable=speed_var, width=5, validate='all', validatecommand=vcmd)
-                    speed_entry.pack(side="left")
-                    
-                    speed_entry.bind('<Control-v>', lambda e: 'break')
-                    speed_entry.bind('<Control-V>', lambda e: 'break')
-                    speed_entry.bind('<Key>', lambda e: self.validate_speed_key(e, speed_var))
-
-                    remove_area_button = tk.Button(area_frame, text="Remove Area", command=lambda: self.remove_area(area_frame, area_name_var.get()))
-                    remove_area_button.pack(side="left")
-
+                    # Set the area name and coordinates
+                    area_name_var.set(area_info["name"])
                     area_frame.area_coords = area_info["coords"]
-                    self.areas.append((area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var))
-                    self.processing_settings[area_name_var.get()] = area_info.get("settings", {})
-
-                    # Capture the image for the area
+                    
+                    # Set the hotkey if it exists
+                    if area_info["hotkey"]:
+                        hotkey_button.hotkey = area_info["hotkey"]
+                        display_name = area_info["hotkey"].replace('num_', 'num:') if area_info["hotkey"].startswith('num_') else area_info["hotkey"]
+                        hotkey_button.config(text=f"Hotkey: [ {display_name} ]")
+                        self.setup_hotkey(hotkey_button, area_frame)
+                    
+                    # Set preprocessing and voice settings
+                    preprocess_var.set(area_info.get("preprocess", False))
+                    if area_info.get("voice") in [voice.name for voice in self.voices]:
+                        voice_var.set(area_info["voice"])
+                    speed_var.set(area_info.get("speed", "1.0"))
+                    
+                    # Load and store image processing settings
+                    if "settings" in area_info:
+                        self.processing_settings[area_info["name"]] = area_info["settings"].copy()
+                        print(f"Loaded image processing settings for area: {area_info['name']}")
+                        
+                    # Update window size after loading each area
+                    self.resize_window()
+                    
+                    # Get coordinates from the loaded area
                     x1, y1, x2, y2 = area_frame.area_coords
                     screenshot = capture_screen_area(x1, y1, x2, y2)
                     
                     # Store original or processed image based on settings
-                    if preprocess_var.get() and area_name_var.get() in self.processing_settings:
-                        settings = self.processing_settings[area_name_var.get()]
+                    if preprocess_var.get() and area_info["name"] in self.processing_settings:
+                        settings = self.processing_settings[area_info["name"]]
                         processed_image = preprocess_image(
                             screenshot,
                             brightness=settings.get('brightness', 1.0),
@@ -1965,7 +2032,7 @@ class GameTextReader:
         
         # Join lines with proper spacing
         filtered_text = ' '.join(filtered_lines)
-        
+
         # If there's no text to read, clear the processing message immediately
         if not filtered_text.strip():
             self.status_label.config(text="")
@@ -1982,62 +2049,61 @@ class GameTextReader:
             for punct in [',', ';']:
                 filtered_text = filtered_text.replace(punct, punct + ' .. ')
 
-        with self.engine_lock:
-            if voice_var:
-                selected_voice = next((v for v in self.voices if v.name == voice_var.get()), None)
-                if selected_voice:
-                    self.engine.setProperty('voice', selected_voice.id)
-                    if selected_voice.languages:
-                        voice_var.set(f"{selected_voice.name} ({selected_voice.languages[0]})")
-                    else:
-                        voice_var.set(selected_voice.name)
-                else:
-                    messagebox.showerror("Error", "No voice selected. Please select a voice.")
-                    print("Error: Did not speak, Reason: No selected voice.")
-                    return
-
-            # Update speed for win32com - Convert from percentage to rate
-            if speed_var is not None:
-                try:
-                    speed = int(speed_var.get())
-                    rate = ((speed - 100) / 100) * 10
-                    if self.speaker:  # Check if speaker exists before setting rate
-                        self.speaker.Rate = int(rate)
-                except (ValueError, AttributeError) as e:
-                    print(f"Warning: Error setting speed: {e}")
-                    if self.speaker:
-                        self.speaker.Rate = 0
-                    speed_var.set("100")
+        # Set the voice and speed for SAPI
+        if voice_var:
+            # Get all available SAPI voices
+            voices = self.speaker.GetVoices()
+            selected_voice = None
+            # Find the voice with matching name
+            for voice in voices:
+                if voice.GetDescription() == voice_var.get():
+                    selected_voice = voice
+                    break
+            if selected_voice:
+                self.speaker.Voice = selected_voice
             else:
-                print("Warning: Speed variable is None, using default rate.")
-                if self.speaker:
-                    self.speaker.Rate = 0
+                messagebox.showerror("Error", "No voice selected. Please select a voice.")
+                print("Error: Did not speak, Reason: No selected voice.")
+                return
 
-            self.is_speaking = True
+        # Update speed for win32com - Convert from percentage to rate (-10 to 10)
+        if speed_var:
             try:
-                # Validate and set volume before speaking
-                if self.speaker:
-                    try:
-                        vol = int(self.volume.get())
-                        if 0 <= vol <= 100:
-                            self.speaker.Volume = vol
-                        else:
-                            self.volume.set("100")
-                            self.speaker.Volume = 100
-                    except ValueError:
-                        self.volume.set("100")
-                        self.speaker.Volume = 100
+                speed = int(speed_var.get())
+                if speed > 0:
+                    # Convert speed percentage to SAPI rate (-10 to 10)
+                    self.speaker.Rate = (speed - 100) // 10
+            except ValueError:
+                pass  # Invalid speed value, ignore
 
-                    self.speaker.Speak(filtered_text, 1)  # 1 is SVSFlagsAsync
-            except Exception as e:
-                print(f"Error during speech: {e}")
-                self.is_speaking = False
-                try:
-                    self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
-                    self.speaker.Volume = int(self.volume.get())
-                except Exception as e2:
-                    print(f"Error reinitializing speaker: {e2}")
+        # Set volume and speak text
+        try:
+            # Set volume
+            try:
+                vol = int(self.volume.get())
+                if 0 <= vol <= 100:
+                    self.speaker.Volume = vol
+                else:
+                    self.volume.set("100")
+                    self.speaker.Volume = 100
+            except ValueError:
+                self.volume.set("100")
+                self.speaker.Volume = 100
+
+            # Speak the text
+            self.is_speaking = True
+            self.speaker.Speak(filtered_text, 1)  # 1 is SVSFlagsAsync
+            print("Speech started.\n--------------------------")
+        except Exception as e:
+            print(f"Error during speech: {e}")
             self.is_speaking = False
+            try:
+                # Try to reinitialize the speaker
+                self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                self.speaker.Volume = int(self.volume.get())
+            except Exception as e2:
+                print(f"Error reinitializing speaker: {e2}")
+                self.is_speaking = False
 
     def cleanup(self):
         """Proper cleanup method for the application"""
