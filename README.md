@@ -12,5 +12,8 @@ Key features:
 4. Hotkey Integration: Assign hotkeys for each area and text-reading controls.
 5. Debugging Tools: View processed images and logs in a dedicated console.
 
+Feel free to give me any feedback if you find any bugs or would like to suggest new features.
+You can contact me via this Google Form: https://forms.gle/8YBU8atkgwjyzdM79
+
 
 ![GameReader](https://github.com/user-attachments/assets/138a49e8-53e9-4eb5-9734-9e4755ebed30)
