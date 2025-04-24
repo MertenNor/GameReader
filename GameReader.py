@@ -29,9 +29,18 @@ import re  # For version extraction
 APP_VERSION = "0.6"
 
 CHANGELOG = """
-- Fixed bug where saving / loading layout was broken
-- Fixed broken voice selection
-- Now  alerts if there is a new update available.
+- BUG Fixes - 
+- Fixed bug where saving / loading layout was broken.  
+- Fixed broken voice selection, it now works properly with not just the default voice.  
+- Improved the gibberish detection. (still experimental)
+
+---
+
+- Added features -  
+- Now alerts on startup if there is a new update available.  
+- Window resizing, added scroll bar if many areas are added.  
+- Improved area name change functionality.  
+- Area name can now be changed with right-click.
 """
 
 
@@ -613,7 +622,7 @@ class GameTextReader:
         local_version = APP_VERSION
         threading.Thread(target=lambda: check_for_update(local_version), daemon=True).start()
         # --- End update check ---
-        self.root.geometry("950x250")  # Initial window size
+        self.root.geometry("950x180")  # Initial window size (height reduced for less vertical tallness)
         self.layout_file = tk.StringVar()
         self.latest_images = {}  # Use a dictionary to store images for each area
         self.latest_area_name = tk.StringVar()  # Ensure this is defined
@@ -725,7 +734,7 @@ class GameTextReader:
         options_frame.pack(fill='x', padx=10, pady=5)
         
         # Top frame contents - Title and buttons
-        title_label = tk.Label(top_frame, text="Game Text Reader v0.5", font=("Helvetica", 12, "bold"))
+        title_label = tk.Label(top_frame, text=f"Game Text Reader v{APP_VERSION}", font=("Helvetica", 12, "bold"))
         title_label.pack(side='left', padx=(0, 20))
         
         # Volume control in top frame
@@ -813,9 +822,37 @@ class GameTextReader:
                                           command=self.set_stop_hotkey)
         self.stop_hotkey_button.pack(side='right')
         
-        # Frame for the areas
-        self.area_frame = tk.Frame(self.root)
-        self.area_frame.pack(fill='both', expand=True, pady=5)
+        # Frame for the areas - now with scrollable canvas
+        self.area_outer_frame = tk.Frame(self.root)
+        self.area_outer_frame.pack(fill='both', expand=True, pady=5)
+
+        self.area_canvas = tk.Canvas(self.area_outer_frame, highlightthickness=0)
+        self.area_canvas.pack(side='left', fill='both', expand=True)
+        self.area_scrollbar = tk.Scrollbar(self.area_outer_frame, orient='vertical', command=self.area_canvas.yview)
+        self.area_scrollbar.pack(side='right', fill='y')
+
+        # Enable mouse wheel scrolling for the canvas
+        def _on_mousewheel(event):
+            # Windows scroll direction
+            self.area_canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        self.area_canvas.bind_all('<MouseWheel>', _on_mousewheel)
+        
+        # Create a frame inside the canvas for area frames
+        self.area_frame = tk.Frame(self.area_canvas)
+        self.area_window = self.area_canvas.create_window((0, 0), window=self.area_frame, anchor='nw')
+        self.area_canvas.configure(yscrollcommand=self.area_scrollbar.set)
+        
+        # Bind resizing
+        def on_frame_configure(event):
+            self.area_canvas.configure(scrollregion=self.area_canvas.bbox('all'))
+            # Center the inner frame by setting its width to the canvas width
+            canvas_width = self.area_canvas.winfo_width()
+            self.area_canvas.itemconfig(self.area_window, width=canvas_width)
+        self.area_frame.bind('<Configure>', on_frame_configure)
+        self.area_canvas.bind('<Configure>', on_frame_configure)
+        
+        # Only show scrollbar if needed (handled in resize_window)
+        self.area_scrollbar.pack_forget()
         
         # Bind click event to root to remove focus from entry fields
         self.root.bind("<Button-1>", self.remove_focus)
@@ -875,7 +912,7 @@ class GameTextReader:
         title_frame.pack(fill='x', pady=(0, 20))
         
         title_label = ttk.Label(title_frame, 
-                               text="Game Text Reader v0.5", 
+                               text=f"Game Text Reader v{APP_VERSION}", 
                                font=("Helvetica", 16, "bold"))
         title_label.pack(side='left')
         
@@ -1000,14 +1037,14 @@ class GameTextReader:
 
             ("How to Use the Program\n", 'bold'),
             ("═══════════════════════════════\n", None),
-            ("• Click \"Set Area\": Left-click and drag to select the area you want the program to read.\n\n", None),
+            ("• Click \"Set Area\": Left-click and drag to select the area you want the program to read. (Area name can be change with right-click)\n\n", None),
             ("• Click \"Set Hotkey\": Assign a hotkey for the selected area.\n\n", None),
             ("• Click \"Select Voice\": Choose a voice from the dropdown menu.\n\n", None),
             ("• Press the assigned area hotkey to make the program automatically read the text aloud.\n\n", None),
             ("• Use the stop hotkey (if set) to stop the current reading.\n\n", None),
             ("• Adjust the program volume by setting the volume percentage in the main window.\n\n", None),
             ("• The debug console displays the processed image of the last area read and its debug logs.\n\n", None),
-            ("• Make sure to save your loadout once you are happy your setup.\n\n\n", None),
+            ("• Make sure to save your loadout once you are happy with your setup.\n\n\n", None),
 
                     
             ("BUTTONS AND FEATURES\n", 'bold'),
@@ -1247,9 +1284,16 @@ class GameTextReader:
 
     def add_read_area(self):
         area_frame = tk.Frame(self.area_frame)
-        area_frame.pack(pady=(4, 0))
+        area_frame.pack(pady=(4, 0), anchor='center')
         area_name_var = tk.StringVar(value="Area Name")
-        tk.Label(area_frame, textvariable=area_name_var).pack(side="left")
+        area_name_label = tk.Label(area_frame, textvariable=area_name_var)
+        area_name_label.pack(side="left")
+        def prompt_edit_area_name(event=None):
+            new_name = tk.simpledialog.askstring("Edit Area Name", "Enter new area name:", initialvalue=area_name_var.get())
+            if new_name and new_name.strip():
+                area_name_var.set(new_name.strip())
+                self.resize_window()
+        area_name_label.bind('<Button-3>', prompt_edit_area_name)  # Right-click to edit
 
         # Initialize the button first
         set_area_button = tk.Button(area_frame, text="Set Area")
@@ -1301,11 +1345,20 @@ class GameTextReader:
         self.areas.append((area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var))
         print("Added new read area.\n--------------------------")
         
+        # Bind events to update window size live
+        def bind_resize_events(widget):
+            if isinstance(widget, tk.Entry):
+                widget.bind('<KeyRelease>', lambda e: self.resize_window())
+                widget.bind('<FocusOut>', lambda e: self.resize_window())
+            if isinstance(widget, tk.OptionMenu) or isinstance(widget, ttk.Combobox):
+                widget.bind('<<ComboboxSelected>>', lambda e: self.resize_window())
+            widget.bind('<Configure>', lambda e: self.resize_window())
+        for widget in area_frame.winfo_children():
+            bind_resize_events(widget)
+        area_frame.bind('<Configure>', lambda e: self.resize_window())
+
         # Automatically resize the window
         self.resize_window()
-
-
-
 
     def remove_area(self, area_frame, area_name):
         # Find and clean up the hotkey for this area
@@ -1341,23 +1394,62 @@ class GameTextReader:
         print(f"Removed area: {area_name}\n--------------------------")
 
     def resize_window(self):
-        """Resize the window based on the number of areas."""
-        # Calculate base height for controls
-        base_height = 270  # Height for main controls, padding, etc.
-        
-        # Calculate height needed for areas
-        area_height = 0
+        """Resize the window based on the number of areas and the longest area line. Keeps window height fixed after 10 areas, enabling scrollbar."""
+        base_height = 210  # Height for main controls, padding, etc.
+        min_width = 950
+        max_width = 1600
+        area_frame_height = 0
+        if len(self.areas) > 0:
+            self.area_frame.update_idletasks()
+            area_frame_height = self.area_frame.winfo_height()
+        # Calculate area height for up to 10 areas
+        visible_area_count = min(10, len(self.areas))
+        area_row_height = 60  # 55 for frame, 5 for padding
+        fixed_canvas_height = visible_area_count * area_row_height
+        # The total height for window (fixed after 10 areas)
+        # If more than 10 areas, cap height strictly to 10 area rows
+        if len(self.areas) > 10:
+            total_height = base_height + fixed_canvas_height
+        else:
+            total_height = base_height + area_frame_height
+        # Never allow window to grow vertically beyond this cap
+        total_height = min(total_height, base_height + 10 * area_row_height)
+        total_height = max(total_height, 250)
+        # Determine the widest area
+        widest = min_width
         for area in self.areas:
-            frame_height = area[0].winfo_reqheight()
-            if frame_height == 1:  # If frame hasn't been rendered yet
-                frame_height = 40  # Estimated height for a single area
-            area_height += frame_height + 10  # Add padding between areas
-        
-        # Calculate total height with minimum size constraint
-        total_height = max(base_height + area_height, 250)  # Minimum height of 250
-        
-        # Update window geometry
-        self.root.geometry(f"950x{total_height}")
+            frame = area[0]
+            frame.update_idletasks()
+            frame_left = frame.winfo_rootx()
+            farthest_right = frame_left
+            for child in frame.winfo_children():
+                child.update_idletasks()
+                child_right = child.winfo_rootx() + child.winfo_width()
+                if child_right > farthest_right:
+                    farthest_right = child_right
+            area_width = farthest_right - frame_left
+            if area_width > widest:
+                widest = area_width
+        widest += 60
+        window_width = max(min_width, min(max_width, widest))
+        # Set minimum window size, but never force vertical growth beyond the cap
+        self.root.minsize(window_width, min(total_height, base_height + 5 * area_row_height))
+        # Scrollbar logic
+        if hasattr(self, 'area_scrollbar'):
+            if len(self.areas) > 8:
+                self.area_scrollbar.pack(side='right', fill='y')
+                self.area_canvas.configure(yscrollcommand=self.area_scrollbar.set)
+                self.area_canvas.config(height=fixed_canvas_height)
+            else:
+                self.area_scrollbar.pack_forget()
+                self.area_canvas.config(height=area_frame_height)
+        # Only increase window size if needed, never grow vertically past the cap
+        cur_width = self.root.winfo_width()
+        cur_height = self.root.winfo_height()
+        max_height = base_height + 5 * area_row_height
+        if cur_width < window_width or cur_height < total_height:
+            # Always cap the height
+            self.root.geometry(f"{window_width}x{min(total_height, max_height)}")
         self.root.update_idletasks()  # Ensure geometry is applied
 
     def set_area(self, frame, area_name_var, set_area_button):
@@ -2039,22 +2131,21 @@ class GameTextReader:
                 
                 # Apply gibberish filtering if enabled
                 if self.ignore_gibberish_var.get():
-                    filtered_words = [word for word in filtered_words if self.is_valid_text(word)]
+                    vowels = set('aeiouAEIOU')
+                    def is_not_gibberish(word):
+                        if any(c.isalpha() for c in word) or any(c.isdigit() for c in word):
+                            if len(word) <= 3:
+                                return True
+                            # Allow if word contains a vowel (for longer words)
+                            return any(c in vowels for c in word) or any(c.isdigit() for c in word)
+                        return False
+                    filtered_words = [word for word in filtered_words if is_not_gibberish(word)]
                 
                 if filtered_words:  # Only add non-empty lines
                     filtered_lines.append(' '.join(filtered_words))
-        
         # Join lines with proper spacing
         filtered_text = ' '.join(filtered_lines)
 
-        # If there's no text to read, clear the processing message immediately
-        if not filtered_text.strip():
-            self.status_label.config(text="")
-            if hasattr(self, '_feedback_timer') and self._feedback_timer:
-                self.root.after_cancel(self._feedback_timer)
-            return
-        
-        # Add pauses at punctuation if enabled
         if self.pause_at_punctuation_var.get():
             # Replace punctuation with itself plus a pause marker
             for punct in ['.', '!', '?']:
