@@ -26,12 +26,12 @@ import win32con
 import requests  # For checking updates
 import re  # For version extraction
 
-APP_VERSION = "0.7"
+APP_VERSION = "0.7.5"
 
 CHANGELOG = """
 - Changelog -  
-- Added a AutoRead feature that will automaticly read the text in the area you have selected without the use of a hotkey.
-- Changed the layout added more info to the info/help window.
+- Fixed a bug where the auto-read feature would crash the application.
+- Fixed so hotkeys are disabled on pop-ups for a better user experience.
 """
 
 
@@ -40,6 +40,83 @@ log_buffer = io.StringIO()
 
 # Redirect standard output to the StringIO buffer
 sys.stdout = log_buffer
+
+# --- Custom Hotkey Conflict Warning Dialog (No Symbol, Styled OK Button) ---
+def show_thinkr_warning(game_reader, area_name):
+    import keyboard
+    import mouse
+    # Disable all hotkeys when dialog is shown
+    try:
+        keyboard.unhook_all()
+        mouse.unhook_all()
+    except Exception as e:
+        print(f"Error disabling hotkeys for warning dialog: {e}")
+
+    win = tk.Toplevel(game_reader.root)
+    win.title("Hotkey Conflict Detected!")
+    win.geometry("370x170")
+    win.resizable(False, False)
+    win.grab_set()
+    win.transient(game_reader.root)
+
+    # Center the dialog
+    win.update_idletasks()
+    x = game_reader.root.winfo_rootx() + game_reader.root.winfo_width() // 2 - 185
+    y = game_reader.root.winfo_rooty() + game_reader.root.winfo_height() // 2 - 85
+    win.geometry(f"370x170+{x}+{y}")
+
+    # Remove the warning icon (if any)
+    for child in win.winfo_children():
+        if isinstance(child, tk.Label) and child.cget("image"):
+            child.destroy()
+
+    # Add a message label
+    msg = tk.Label(win, text=f"This key is already used by area:\n'{area_name}'.\n\nPlease choose a different hotkey.", font=("Helvetica", 12), wraplength=340, justify="center")
+    msg.pack(pady=(28, 6))
+
+    # Add OK button
+    btn = tk.Button(win, text="OK", width=12, height=1, font=("Helvetica", 11, "bold"), relief="raised", bd=2)
+    btn.pack(pady=(6, 10))
+
+    # Focus the button for keyboard users
+    btn.focus_set()
+
+    # Bind Enter key to OK
+    win.bind("<Return>", lambda e: win.destroy())
+
+    # Disable all hotkeys while the dialog is open
+    try:
+        keyboard.unhook_all()
+        mouse.unhook_all()
+    except Exception as e:
+        print(f"Error disabling hotkeys: {e}")
+
+    # Restore hotkeys when dialog is closed
+    def on_close():
+        try:
+            game_reader.restore_all_hotkeys()
+        except Exception as e:
+            print(f"Error restoring hotkeys: {e}")
+        win.destroy()
+
+    win.protocol("WM_DELETE_WINDOW", on_close)
+    # Also patch the OK button and <Return> binding to use on_close
+    btn.config(command=on_close)
+    win.bind("<Return>", lambda e: on_close())
+
+def restore_all_hotkeys():
+    """
+    Restore all hotkeys for the application. This function should be adapted to your app's hotkey storage logic.
+    """
+    import keyboard
+    import mouse
+    # Example: restore hotkeys for each area if you have a list/dict of them
+    # Replace the following with your actual hotkey setup logic
+    if hasattr(globals(), 'app_hotkeys'):
+        for hotkey, callback in globals()['app_hotkeys'].items():
+            keyboard.add_hotkey(hotkey, callback)
+    # If you use mouse hotkeys, add them similarly
+    # mouse.add_hotkey(...)
 
 class ConsoleWindow:
     def __init__(self, root, log_buffer, layout_file_var, latest_images, latest_area_name_var):
@@ -584,7 +661,7 @@ def check_for_update(local_version):
                 root = tk._default_root or tk.Tk()
                 if not tk._default_root:
                     root.withdraw()
-                msg = f"A new version of GameReader is available on GitHub!\n\nLocal version: {local_version}\nLatest version: {remote_version}"
+                msg = f"A new version of GameReader is available!\n\nLocal version: {local_version}\nLatest version: {remote_version}"
                 if remote_changelog:
                     msg += f"\n\nWhat's new:\n{remote_changelog}"
                 msg += "\n\nVisit GitHub to download the update."
@@ -1152,7 +1229,10 @@ class GameTextReader:
             
             ("• Create two identical areas with different hotkeys: assign one a male voice and the other a female voice.\n", None),
             ("  This lets you easily switch between male and female voices for text, ideal for game dialogue.\n\n", None),
-            ("• Experiment with different preprocessing settings for optimal text recognition in your specific use case.\n", None)
+            ("• Experiment with different preprocessing settings for optimal text recognition in your specific use case.\n\n", None),
+            ("• Want more Voices? add them in windows. \n", None),
+            ("  Go to Settings > Time & Language > Speech > Manage voices, then click 'Add voices' to install new ones. \n", None),
+            ("  you can also find other Narrator voices online that you can add to windows. \n", None),
         ]
         
         # Insert text with tags
@@ -1339,13 +1419,21 @@ class GameTextReader:
         area_name_var = tk.StringVar(value=area_name)
         area_name_label = tk.Label(area_frame, textvariable=area_name_var)
         area_name_label.pack(side="left")
+        
         # For Auto Read, never allow editing or right-click
         if editable_name and not (not removable and area_name == "Auto Read"):
             def prompt_edit_area_name(event=None):
-                new_name = tk.simpledialog.askstring("Edit Area Name", "Enter new area name:", initialvalue=area_name_var.get())
-                if new_name and new_name.strip():
-                    area_name_var.set(new_name.strip())
-                    self.resize_window()
+                try:
+                    self.disable_all_hotkeys()
+                    new_name = tk.simpledialog.askstring("Edit Area Name", "Enter new area name:", initialvalue=area_name_var.get())
+                    if new_name and new_name.strip():
+                        area_name_var.set(new_name.strip())
+                finally:
+                    try:
+                        self.restore_all_hotkeys()
+                    except Exception as e:
+                        print(f"Error restoring hotkeys after rename: {e}")
+                self.resize_window()
             area_name_label.bind('<Button-3>', prompt_edit_area_name)  # Right-click to edit
 
         # Initialize the button first
@@ -1547,6 +1635,13 @@ class GameTextReader:
     def set_area(self, frame, area_name_var, set_area_button):
         x1, y1, x2, y2 = 0, 0, 0, 0
         selection_cancelled = False
+        # --- Disable all hotkeys before starting area selection ---
+        try:
+            keyboard.unhook_all()
+            mouse.unhook_all()
+        except Exception as e:
+            print(f"Error disabling hotkeys for area selection: {e}")
+        self.hotkeys_disabled_for_selection = True
 
         def on_drag(event):
             if not selection_cancelled:
@@ -1600,6 +1695,13 @@ class GameTextReader:
                 else:
                     select_area_window.destroy()
 
+                # --- Re-enable hotkeys after area selection completes ---
+                try:
+                    self.restore_all_hotkeys()
+                except Exception as e:
+                    print(f"Error restoring hotkeys after area selection: {e}")
+                self.hotkeys_disabled_for_selection = False
+
                 # Only prompt for name if it's the default or not set, and not Auto Read
                 current_name = area_name_var.get()
                 if not is_auto_read:
@@ -1614,10 +1716,12 @@ class GameTextReader:
                             return
                     else:
                         print(f"Updated area: {frame.area_coords} with existing name {current_name}\n--------------------------")
-                    set_area_button.config(text="Edit Area")
+                    if set_area_button is not None:
+                        set_area_button.config(text="Edit Area")
                 else:
                     # Always keep button label as 'Select Area' for Auto Read
-                    set_area_button.config(text="Select Area")
+                    if set_area_button is not None:
+                        set_area_button.config(text="Select Area")
 
         def on_escape(event):
             nonlocal selection_cancelled
@@ -1625,6 +1729,12 @@ class GameTextReader:
             if not hasattr(frame, 'area_coords'):
                 frame.area_coords = (0, 0, 0, 0)
             select_area_window.destroy()
+            # --- Re-enable hotkeys if selection is cancelled ---
+            try:
+                self.restore_all_hotkeys()
+            except Exception as e:
+                print(f"Error restoring hotkeys after cancelling area selection: {e}")
+            self.hotkeys_disabled_for_selection = False
             print("Area selection cancelled\n--------------------------")
 
         # Create fullscreen window that spans all monitors
@@ -1685,12 +1795,95 @@ class GameTextReader:
         select_area_window.bind("<FocusOut>", lambda e: select_area_window.focus_force())
         select_area_window.bind("<Key>", lambda e: on_escape(e) if e.keysym == "Escape" else None)
 
+    def disable_all_hotkeys(self):
+        """Disable all hotkeys for keyboard and mouse."""
+        try:
+            import keyboard
+            import mouse
+            keyboard.unhook_all()
+            mouse.unhook_all()
+        except Exception as e:
+            print(f"Error disabling all hotkeys: {e}")
+
+    def restore_all_hotkeys(self):
+        """Restore all area and stop hotkeys after area selection is finished/cancelled."""
+        # Re-register all hotkeys for areas
+        for area_tuple in getattr(self, 'areas', []):
+            area_frame, hotkey_button, _, _, _, _, _ = area_tuple
+            if hasattr(hotkey_button, 'hotkey'):
+                try:
+                    self.setup_hotkey(hotkey_button, area_frame)
+                except Exception as e:
+                    print(f"Error re-registering hotkey: {e}")
+        # Re-register stop hotkey if it exists
+        if hasattr(self, 'stop_hotkey_button') and hasattr(self.stop_hotkey_button, 'mock_button'):
+            try:
+                self.setup_hotkey(self.stop_hotkey_button.mock_button, None)
+            except Exception as e:
+                print(f"Error re-registering stop hotkey: {e}")
+
     def set_hotkey(self, button, area_frame):
+        # --- Disable all hotkeys before starting hotkey assignment ---
+        try:
+            keyboard.unhook_all()
+            mouse.unhook_all()
+        except Exception as e:
+            print(f"Error disabling hotkeys for hotkey assignment: {e}")
+        self.hotkeys_disabled_for_hotkey = True
+        self._hotkey_assignment_cancelled = False  # Guard flag to block late events
+
+        def finish_hotkey_assignment():
+            # --- Re-enable all hotkeys after hotkey assignment is finished/cancelled ---
+            try:
+                self.restore_all_hotkeys()
+            except Exception as e:
+                print(f"Error restoring hotkeys after hotkey assignment: {e}")
+            self.hotkeys_disabled_for_hotkey = False
+
         def on_key_press(event):
-            self.setting_hotkey = True
+            if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                return
             key_name = event.name
             if event.scan_code in self.numpad_scan_codes:
                 key_name = f"num_{self.numpad_scan_codes[event.scan_code]}"
+            # Disallow Esc key as a hotkey
+            if key_name.lower() in ("esc", "escape"):
+                # Unhook temp hooks and set flags BEFORE showing the warning
+                self.setting_hotkey = False
+                self._hotkey_assignment_cancelled = True  # Block all further events
+                if hasattr(button, 'keyboard_hook_temp'):
+                    keyboard.unhook(button.keyboard_hook_temp)
+                    delattr(button, 'keyboard_hook_temp')
+                if hasattr(button, 'mouse_hook_temp'):
+                    mouse.unhook(button.mouse_hook_temp)
+                    delattr(button, 'mouse_hook_temp')
+                finish_hotkey_assignment()
+                if hasattr(button, 'hotkey'):
+                    display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
+                    button.config(text=f"Set Hotkey: [ {display_name} ]")
+                else:
+                    button.config(text="Set Hotkey")
+                # Show the same custom dialog as for mouse button hotkey errors
+                dialog = tk.Toplevel(self.root)
+                dialog.title("Invalid Hotkey")
+                dialog.geometry("300x120")
+                dialog.transient(self.root)
+                dialog.grab_set()
+                # Center the dialog on the screen
+                dialog.update_idletasks()
+                x = self.root.winfo_rootx() + self.root.winfo_width()//2 - 150
+                y = self.root.winfo_rooty() + self.root.winfo_height()//2 - 60
+                dialog.geometry(f"300x120+{x}+{y}")
+                # Add message
+                msg = tk.Label(dialog, text="Escape (Esc) cannot be used as a hotkey.\nPlease set a different hotkey.", pady=20)
+                msg.pack()
+                # Add OK button
+                ok_btn = tk.Button(dialog, text="OK", command=dialog.destroy, width=10)
+                ok_btn.pack(pady=10)
+                ok_btn.focus_set()
+                dialog.bind("<Return>", lambda e: dialog.destroy())
+                dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+                return
             # Remove existing hook for this button only
             if hasattr(button, 'keyboard_hook'):
                 try:
@@ -1698,16 +1891,27 @@ class GameTextReader:
                     delattr(button, 'keyboard_hook')
                 except:
                     pass
-            # Check for hotkey conflicts
+            # Check for hotkey conflicts across ALL areas, including Auto Read
             for area_frame2, hotkey_button2, _, area_name_var2, _, _, _ in self.areas:
+                # Do not allow duplicate hotkeys for any area (including Auto Read)
                 if hotkey_button2 is not button and hasattr(hotkey_button2, 'hotkey') and hotkey_button2.hotkey == key_name:
-                    messagebox.showwarning("Hotkey Conflict", f"This key is already used by area '{area_name_var2.get()}'.\nPlease choose a different key.")
+                    # Unhook temp hooks and set flags BEFORE showing the warning
+                    self.setting_hotkey = False
+                    self._hotkey_assignment_cancelled = True  # Block all further events
+                    if hasattr(button, 'keyboard_hook_temp'):
+                        keyboard.unhook(button.keyboard_hook_temp)
+                        delattr(button, 'keyboard_hook_temp')
+                    if hasattr(button, 'mouse_hook_temp'):
+                        mouse.unhook(button.mouse_hook_temp)
+                        delattr(button, 'mouse_hook_temp')
+                    finish_hotkey_assignment()
+                    # Now show the warning dialog (no hooks are active)
                     if hasattr(button, 'hotkey'):
                         display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
                         button.config(text=f"Set Hotkey: [ {display_name} ]")
                     else:
                         button.config(text="Set Hotkey")
-                    self.setting_hotkey = False
+                    show_thinkr_warning(self, area_name_var2.get())
                     return
             button.hotkey = key_name
             display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
@@ -1721,8 +1925,13 @@ class GameTextReader:
             if hasattr(button, 'mouse_hook_temp'):
                 mouse.unhook(button.mouse_hook_temp)
                 delattr(button, 'mouse_hook_temp')
+            finish_hotkey_assignment()
+            # Guard: prevent any further hotkey assignment callbacks
+            self.setting_hotkey = False
             return
         def on_mouse_click(event):
+            if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                return
             if not hasattr(event, 'event_type') or event.event_type != mouse.DOWN:
                 return
             if getattr(event, 'button', None) in [1, 2]:
@@ -1732,6 +1941,22 @@ class GameTextReader:
                     button.config(text=f"Set Hotkey: [ {display_name} ]")
                 else:
                     button.config(text="Set Hotkey")
+                # Unhook temp hooks and set flags BEFORE showing the warning
+                self.setting_hotkey = False
+                self._hotkey_assignment_cancelled = True  # Block all further events
+                if hasattr(button, 'keyboard_hook_temp'):
+                    keyboard.unhook(button.keyboard_hook_temp)
+                    delattr(button, 'keyboard_hook_temp')
+                if hasattr(button, 'mouse_hook_temp'):
+                    mouse.unhook(button.mouse_hook_temp)
+                    delattr(button, 'mouse_hook_temp')
+                finish_hotkey_assignment()
+                if hasattr(button, 'hotkey'):
+                    display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
+                    button.config(text=f"Set Hotkey: [ {display_name} ]")
+                else:
+                    button.config(text="Set Hotkey")
+                messagebox.showerror("Error", "Left and right mouse buttons cannot be used as hotkeys.")
                 return
             key_name = f'button{event.button}'
             if hasattr(button, 'mouse_hook'):
@@ -1742,12 +1967,13 @@ class GameTextReader:
                     pass
             for area_frame2, hotkey_button2, _, area_name_var2, _, _, _ in self.areas:
                 if hotkey_button2 is not button and hasattr(hotkey_button2, 'hotkey') and hotkey_button2.hotkey == key_name:
-                    messagebox.showwarning("Hotkey Conflict", f"This key is already used by area '{area_name_var2.get()}'.\nPlease choose a different key.")
+                    show_thinkr_warning(self, area_name_var2.get())
                     if hasattr(button, 'hotkey'):
                         display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
                         button.config(text=f"Set Hotkey: [ {display_name} ]")
                     else:
                         button.config(text="Set Hotkey")
+                    finish_hotkey_assignment()
                     return
             button.hotkey = key_name
             button.config(text=f"Set Hotkey: [ {key_name} ]")
@@ -1759,6 +1985,7 @@ class GameTextReader:
             if hasattr(button, 'mouse_hook_temp'):
                 mouse.unhook(button.mouse_hook_temp)
                 delattr(button, 'mouse_hook_temp')
+            finish_hotkey_assignment()
             return
         # Clean up previous hooks
         if hasattr(button, 'keyboard_hook'):
@@ -1774,6 +2001,7 @@ class GameTextReader:
             except Exception as e:
                 print(f"Error cleaning up mouse hook: {e}")
         button.config(text="Press any key...")
+        self.setting_hotkey = True  # Enable hotkey assignment mode before installing hooks
         button.keyboard_hook_temp = keyboard.on_press(on_key_press)
         button.mouse_hook_temp = mouse.hook(on_mouse_click)
 
