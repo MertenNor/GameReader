@@ -12,6 +12,11 @@ Key features:
 4. Hotkey Integration: Assign hotkeys for each area and text-reading controls.
 5. Debugging Tools: View processed images and logs in a dedicated console.
 
+**Want more Voices?**
+
+-Add them in Windows, go to Settings > Time & Language > Speech > Manage voices, then click 'Add voices' to install new ones.
+You can also find other Narrator voices online that you can add to Windows.
+
    
 
 **Support & Feedback:**
