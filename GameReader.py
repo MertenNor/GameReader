@@ -26,21 +26,12 @@ import win32con
 import requests  # For checking updates
 import re  # For version extraction
 
-APP_VERSION = "0.6"
+APP_VERSION = "0.7"
 
 CHANGELOG = """
-- BUG Fixes - 
-- Fixed bug where saving / loading layout was broken.  
-- Fixed broken voice selection, it now works properly with not just the default voice.  
-- Improved the gibberish detection. (still experimental)
-
----
-
-- Added features -  
-- Now alerts on startup if there is a new update available.  
-- Window resizing, added scroll bar if many areas are added.  
-- Improved area name change functionality.  
-- Area name can now be changed with right-click.
+- Changelog -  
+- Added a AutoRead feature that will automaticly read the text in the area you have selected without the use of a hotkey.
+- Changed the layout added more info to the info/help window.
 """
 
 
@@ -896,6 +887,28 @@ class GameTextReader:
         info_window = tk.Toplevel(self.root)
         info_window.title("Game Text Reader - Information")
         info_window.geometry("900x600")  # Slightly taller for better spacing
+
+        # --- Disable all hotkeys while info window is open ---
+        try:
+            keyboard.unhook_all()
+            mouse.unhook_all()
+        except Exception as e:
+            print(f"Error unhooking hotkeys for info window: {e}")
+
+        # On close, re-enable all hotkeys
+        def on_info_close():
+            # Restore hotkeys for all areas
+            for area in self.areas:
+                area_frame, hotkey_button, _, _, _, _, _ = area
+                if hasattr(hotkey_button, 'hotkey'):
+                    self.setup_hotkey(hotkey_button, area_frame)
+            # Restore stop hotkey if present
+            if hasattr(self, 'stop_hotkey_button') and hasattr(self.stop_hotkey_button, 'mock_button'):
+                self.setup_hotkey(self.stop_hotkey_button.mock_button, None)
+            info_window.destroy()
+
+        info_window.protocol("WM_DELETE_WINDOW", on_info_close)
+        info_window.bind('<Escape>', lambda e: on_info_close())
         
         # Set window icon if available
         try:
@@ -916,61 +929,79 @@ class GameTextReader:
                                font=("Helvetica", 16, "bold"))
         title_label.pack(side='left')
         
-        # Credits section with clickable links
+        # Credits and Links Section - Improved Layout
         credits_frame = ttk.Frame(main_frame)
         credits_frame.pack(fill='x', pady=(0, 20))
-        
-        # Designer info
-        designer_frame = ttk.Frame(credits_frame)
-        designer_frame.pack(fill='x')
-        designer_label = ttk.Label(designer_frame, 
-                                 text="Designer: MertenNor",
-                                 font=("Helvetica", 10))
-        designer_label.pack(side='left')
-        
-        # Coder info
-        coder_frame = ttk.Frame(credits_frame)
-        coder_frame.pack(fill='x')
-        coder_label = ttk.Label(coder_frame,
-                               text="Coder: ChatGPT / Claude-3.5 via the Cursor application",
-                               font=("Helvetica", 10))
-        coder_label.pack(fill='x')
-        
-        # Website link
-        website_frame = ttk.Frame(credits_frame)
-        website_frame.pack(fill='x')
-        website_label = ttk.Label(website_frame,
-                                 text="Cursor website: ",
-                                 font=("Helvetica", 10))
-        website_label.pack(side='left')
-        website_link = ttk.Label(website_frame,
-                                text="www.cursor.com",
-                                font=("Helvetica", 10),
-                                foreground='black',
-                                cursor='hand2')
-        website_link.pack(side='left')
-        website_link.bind("<Button-1>", lambda e: open_url("https://www.cursor.com/"))
-        website_link.bind("<Enter>", lambda e: website_link.configure(font=("Helvetica", 10, "underline")))
-        website_link.bind("<Leave>", lambda e: website_link.configure(font=("Helvetica", 10)))
+
+        # --- Horizontal Frame for Program Info and Official Links ---
+        credits_row = ttk.Frame(credits_frame)
+        credits_row.pack(fill='x', pady=(0, 5))
+
+        # Program Info (left)
+        proginfo_frame = ttk.Frame(credits_row)
+        proginfo_frame.pack(side='left', padx=0, anchor='n')
+        proginfo_label = ttk.Label(proginfo_frame, text="Program Information", font=("Helvetica", 11, "bold"))
+        proginfo_label.pack(side='top', anchor='w')
+        designer_label = ttk.Label(proginfo_frame, text="Designer: MertenNor", font=("Helvetica", 10))
+        designer_label.pack(side='left', padx=(0, 15))
+        # Coder line with embedded Cursor link
+        coder_frame = ttk.Frame(proginfo_frame)
+        coder_frame.pack(side='left')
+        coder_label1 = ttk.Label(coder_frame, text="Coder: ChatGPT / Claude-3.5 via ", font=("Helvetica", 10))
+        coder_label1.pack(side='left')
+        cursor_link = ttk.Label(coder_frame, text="Cursor", font=("Helvetica", 10, "underline"), foreground='black', cursor='hand2')
+        cursor_link.pack(side='left')
+        cursor_link.bind("<Button-1>", lambda e: open_url("https://www.cursor.com/"))
+        cursor_link.bind("<Enter>", lambda e: cursor_link.configure(font=("Helvetica", 10, "underline")))
+        cursor_link.bind("<Leave>", lambda e: cursor_link.configure(font=("Helvetica", 10)))
+
+        # Official Links (right)
+        links_frame = ttk.Frame(credits_row)
+        links_frame.pack(side='left', padx=(80, 0), anchor='n')
+        links_label = ttk.Label(links_frame, text="Official Links", font=("Helvetica", 11, "bold"))
+        links_label.pack(side='top', anchor='w')
+
+        # GitHub link
+        github_frame = ttk.Frame(links_frame)
+        github_frame.pack(fill='x', pady=(2, 0))
+        github_label = ttk.Label(github_frame, text="GitHub: ", font=("Helvetica", 10, "bold"))
+        github_label.pack(side='left')
+        github_link = ttk.Label(github_frame, text="GitHub.com/mertennor/gamereader", font=("Helvetica", 10), foreground='black', cursor='hand2')
+        github_link.pack(side='left')
+        github_link.bind("<Button-1>", lambda e: open_url("https://github.com/MertenNor/GameReader"))
+        github_link.bind("<Enter>", lambda e: github_link.configure(font=("Helvetica", 10, "underline")))
+        github_link.bind("<Leave>", lambda e: github_link.configure(font=("Helvetica", 10)))
+
+        # --- Section: Support & Feedback ---
+        support_frame = ttk.Frame(credits_frame)
+        support_frame.pack(fill='x', pady=(10, 5))
+        support_label = ttk.Label(support_frame, text="Support & Feedback", font=("Helvetica", 11, "bold"))
+        support_label.pack(side='top', anchor='w')
 
         # Coffee link
-        coffee_frame = ttk.Frame(credits_frame)
-        coffee_frame.pack(fill='x')
-        coffee_label = ttk.Label(coffee_frame,
-                                text="Buy me a Coffee: ",
-                                font=("Helvetica", 10))
+        coffee_frame = ttk.Frame(support_frame)
+        coffee_frame.pack(fill='x', pady=(2, 0))
+        coffee_label = ttk.Label(coffee_frame, text="Buy me a Coffee: ", font=("Helvetica", 10, "bold"))
         coffee_label.pack(side='left')
-        support_link = ttk.Label(coffee_frame,
-                                text="www.buymeacoffee.com/mertennor ☕",
-                                font=("Helvetica", 10),
-                                foreground='black',
-                                cursor='hand2')
+        support_link = ttk.Label(coffee_frame, text="BuyMeaCoffee.com/mertennor ☕", font=("Helvetica", 10), foreground='black', cursor='hand2')
         support_link.pack(side='left')
         support_link.bind("<Button-1>", lambda e: open_url("https://www.buymeacoffee.com/mertennor"))
         support_link.bind("<Enter>", lambda e: support_link.configure(font=("Helvetica", 10, "underline")))
         support_link.bind("<Leave>", lambda e: support_link.configure(font=("Helvetica", 10)))
-        
-        # Tesseract warning
+
+        # Feedback link
+        feedback_frame = ttk.Frame(support_frame)
+        feedback_frame.pack(fill='x', pady=(2, 0))
+        feedback_label = ttk.Label(feedback_frame, text="Bug Reports & Feedback via Google Form: ", font=("Helvetica", 10, "bold"))
+        feedback_label.pack(side='left')
+        feedback_link = ttk.Label(feedback_frame, text="Forms.Gle/8YBU8atkgwjyzdM79 🐞", font=("Helvetica", 10), foreground='black', cursor='hand2')
+        feedback_link.pack(side='left')
+        feedback_link.bind("<Button-1>", lambda e: open_url("https://forms.gle/8YBU8atkgwjyzdM79"))
+        feedback_link.bind("<Enter>", lambda e: feedback_link.configure(font=("Helvetica", 10, "underline")))
+        feedback_link.bind("<Leave>", lambda e: feedback_link.configure(font=("Helvetica", 10)))
+
+        # Spacer before Tesseract warning
+        ttk.Label(credits_frame, text="").pack()
         tesseract_frame = ttk.Frame(credits_frame)
         tesseract_frame.pack(fill='x', pady=(10, 0))
 
@@ -992,18 +1023,30 @@ class GameTextReader:
             font=("Helvetica", 10, "bold"),
             foreground='red'
         )
+        # Download instruction and clickable URL on the same line
+        download_row = ttk.Frame(tesseract_frame)
+        download_row.pack(anchor='w')
+        download_label = ttk.Label(download_row,
+                                   text="Download the latest version here: ",
+                                   font=("Helvetica", 10, "bold"),
+                                   foreground='red')
         download_label.pack(side='left')
-                
-        tesseract_link = ttk.Label(tesseract_frame,
-                            text="www.gitub.com/tesseract-ocr/tesseract/releases",
-                            font=("Helvetica", 10),
-                            foreground='blue',
-                            cursor='hand2')
+        tesseract_link = ttk.Label(download_row,
+                                   text="www.gitub.com/tesseract-ocr/tesseract/releases",
+                                   font=("Helvetica", 10),
+                                   foreground='blue',
+                                   cursor='hand2')
         tesseract_link.pack(side='left')
         tesseract_link.bind("<Button-1>", lambda e: open_url("https://github.com/tesseract-ocr/tesseract/releases"))
         tesseract_link.bind("<Enter>", lambda e: tesseract_link.configure(font=("Helvetica", 10, "underline")))
         tesseract_link.bind("<Leave>", lambda e: tesseract_link.configure(font=("Helvetica", 10)))
-        
+        # Explanatory label below
+        tesseract_note = ttk.Label(tesseract_frame,
+                                   text="( yes, you need this if you want this program to read the text for you. )",
+                                   font=("Helvetica", 11, "bold"),
+                                   foreground='red')
+        tesseract_note.pack(anchor='w', padx=(0,0), pady=(2, 6))
+
         
         # Create a frame with scrollbar for the main content
         content_frame = ttk.Frame(main_frame)
@@ -1049,6 +1092,14 @@ class GameTextReader:
                     
             ("BUTTONS AND FEATURES\n", 'bold'),
             ("═════════════════════\n\n", None),
+
+
+            ("AutoRead\n", 'bold'),
+            ("------------------------\n", None),
+            ("When assigned a hotkey, the program will automatically read the text in the selected area.\n", None),
+            ("The save button here will save the settings for the AutoRead area only.\n", None),
+            ("This save file can be found here: C:\\Users\\<username>\\AppData\\Local\\Temp Filename: auto_read_settings.json\n\n", None),
+            
             
             ("Add read area\n", 'bold'),
             ("------------------------\n", None),
@@ -1282,27 +1333,37 @@ class GameTextReader:
         else:  # For volume, keep 0-100 limit
             return 0 <= value <= 100
 
-    def add_read_area(self):
+    def add_read_area(self, removable=True, editable_name=True, area_name="Area Name"):
         area_frame = tk.Frame(self.area_frame)
         area_frame.pack(pady=(4, 0), anchor='center')
-        area_name_var = tk.StringVar(value="Area Name")
+        area_name_var = tk.StringVar(value=area_name)
         area_name_label = tk.Label(area_frame, textvariable=area_name_var)
         area_name_label.pack(side="left")
-        def prompt_edit_area_name(event=None):
-            new_name = tk.simpledialog.askstring("Edit Area Name", "Enter new area name:", initialvalue=area_name_var.get())
-            if new_name and new_name.strip():
-                area_name_var.set(new_name.strip())
-                self.resize_window()
-        area_name_label.bind('<Button-3>', prompt_edit_area_name)  # Right-click to edit
+        # For Auto Read, never allow editing or right-click
+        if editable_name and not (not removable and area_name == "Auto Read"):
+            def prompt_edit_area_name(event=None):
+                new_name = tk.simpledialog.askstring("Edit Area Name", "Enter new area name:", initialvalue=area_name_var.get())
+                if new_name and new_name.strip():
+                    area_name_var.set(new_name.strip())
+                    self.resize_window()
+            area_name_label.bind('<Button-3>', prompt_edit_area_name)  # Right-click to edit
 
         # Initialize the button first
-        set_area_button = tk.Button(area_frame, text="Set Area")
-        set_area_button.pack(side="left")
+        if not removable and area_name == "Auto Read":
+            # set_area_button = tk.Button(area_frame, text="Select Area")
+            # set_area_button.pack(side="left")
+            set_area_button = None
+        else:
+            set_area_button = tk.Button(area_frame, text="Set Area")
+            set_area_button.pack(side="left")
         # Add separator
-        tk.Label(area_frame, text="  ->").pack(side="left")
+        tk.Label(area_frame, text=" ⏐ ").pack(side="left")
         # Configure the command separately
-        set_area_button.config(command=partial(self.set_area, area_frame, area_name_var, set_area_button))
+        # Custom set_area_button command for Auto Read: only open selection overlay, never trigger reading directly
+        if set_area_button is not None:
+            set_area_button.config(command=partial(self.set_area, area_frame, area_name_var, set_area_button))
 
+        # Always add hotkey button for all areas, including Auto Read
         hotkey_button = tk.Button(area_frame, text="Set Hotkey")
         hotkey_button.config(command=lambda: self.set_hotkey(hotkey_button, area_frame))
         hotkey_button.pack(side="left")
@@ -1337,10 +1398,41 @@ class GameTextReader:
         speed_entry.bind('<Control-V>', lambda e: 'break')
         speed_entry.bind('<Key>', lambda e: self.validate_speed_key(e, speed_var))
 
-        remove_area_button = tk.Button(area_frame, text="Remove Area", command=lambda: self.remove_area(area_frame, area_name_var.get()))
-        remove_area_button.pack(side="left")
-        # Add separator
-        tk.Label(area_frame, text="").pack(side="left")  # No symbol for last separator; empty label
+        if removable:
+            remove_area_button = tk.Button(area_frame, text="Remove Area", command=lambda: self.remove_area(area_frame, area_name_var.get()))
+            remove_area_button.pack(side="left")
+            # Add separator
+            tk.Label(area_frame, text="").pack(side="left")  # No symbol for last separator; empty label
+        else:
+            # Save button for Auto Read area
+            def save_auto_read_settings():
+                import tempfile, os, json
+                # Find the hotkey for the Auto Read area
+                hotkey = None
+                for area in self.areas:
+                    area_frame2, hotkey_button2, _, area_name_var2, _, _, _ = area
+                    if area_frame2 == area_frame and area_name_var2.get() == "Auto Read":
+                        hotkey = getattr(hotkey_button2, 'hotkey', None)
+                        break
+                settings = {
+                    'preprocess': preprocess_var.get(),
+                    'voice': voice_var.get(),
+                    'speed': speed_var.get(),
+                    'hotkey': hotkey,
+                }
+                # Optionally add more settings as needed
+                temp_path = os.path.join(tempfile.gettempdir(), 'auto_read_settings.json')
+                with open(temp_path, 'w') as f:
+                    json.dump(settings, f)
+                # Show status message
+                if hasattr(self, 'status_label'):
+                    self.status_label.config(text="Auto Read area settings saved")
+                    if hasattr(self, '_feedback_timer') and self._feedback_timer:
+                        self.root.after_cancel(self._feedback_timer)
+                    self._feedback_timer = self.root.after(2000, lambda: self.status_label.config(text=""))
+            save_button = tk.Button(area_frame, text="Save", command=save_auto_read_settings)
+            save_button.pack(side="left")
+            tk.Label(area_frame, text="").pack(side="left")  # No symbol for last separator; empty label
 
         self.areas.append((area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var))
         print("Added new read area.\n--------------------------")
@@ -1499,23 +1591,33 @@ class GameTextReader:
                     max(x1_screen, x2), 
                     max(y1_screen, y2)
                 )
-                select_area_window.destroy()
-                
-                # Only prompt for name if it's the default or not set
-                current_name = area_name_var.get()
-                if current_name == "Area Name":
-                    area_name = simpledialog.askstring("Area Name", "Enter a name for this area:")
-                    if area_name and area_name.strip():
-                        area_name_var.set(area_name)
-                        print(f"Set area: {frame.area_coords} with name {area_name_var.get()}\n--------------------------")
-                    else:
-                        messagebox.showerror("Error", "Area name cannot be empty.")
-                        print("Error: Area name cannot be empty.")
-                        return
+                # If this is the Auto Read area, trigger reading immediately and keep button label as 'Select Area'
+                is_auto_read = hasattr(area_name_var, 'get') and area_name_var.get() == "Auto Read"
+                if is_auto_read:
+                    select_area_window.destroy()
+                    # Read after a short delay so overlay is gone
+                    self.root.after(100, lambda: self.read_area(frame))
                 else:
-                    print(f"Updated area: {frame.area_coords} with existing name {current_name}\n--------------------------")
-                
-                set_area_button.config(text="Edit Area")
+                    select_area_window.destroy()
+
+                # Only prompt for name if it's the default or not set, and not Auto Read
+                current_name = area_name_var.get()
+                if not is_auto_read:
+                    if current_name == "Area Name":
+                        area_name = simpledialog.askstring("Area Name", "Enter a name for this area:")
+                        if area_name and area_name.strip():
+                            area_name_var.set(area_name)
+                            print(f"Set area: {frame.area_coords} with name {area_name_var.get()}\n--------------------------")
+                        else:
+                            messagebox.showerror("Error", "Area name cannot be empty.")
+                            print("Error: Area name cannot be empty.")
+                            return
+                    else:
+                        print(f"Updated area: {frame.area_coords} with existing name {current_name}\n--------------------------")
+                    set_area_button.config(text="Edit Area")
+                else:
+                    # Always keep button label as 'Select Area' for Auto Read
+                    set_area_button.config(text="Select Area")
 
         def on_escape(event):
             nonlocal selection_cancelled
@@ -1585,14 +1687,10 @@ class GameTextReader:
 
     def set_hotkey(self, button, area_frame):
         def on_key_press(event):
-            # Set flag to ignore hotkey triggers
             self.setting_hotkey = True
-            
-            # Get the key name
             key_name = event.name
             if event.scan_code in self.numpad_scan_codes:
                 key_name = f"num_{self.numpad_scan_codes[event.scan_code]}"
-            
             # Remove existing hook for this button only
             if hasattr(button, 'keyboard_hook'):
                 try:
@@ -1600,62 +1698,69 @@ class GameTextReader:
                     delattr(button, 'keyboard_hook')
                 except:
                     pass
-            if hasattr(button, 'mouse_hook'):
-                try:
-                    mouse.unhook(button.mouse_hook)
-                    delattr(button, 'mouse_hook')
-                except:
-                    pass
-            
+            # Check for hotkey conflicts
+            for area_frame2, hotkey_button2, _, area_name_var2, _, _, _ in self.areas:
+                if hotkey_button2 is not button and hasattr(hotkey_button2, 'hotkey') and hotkey_button2.hotkey == key_name:
+                    messagebox.showwarning("Hotkey Conflict", f"This key is already used by area '{area_name_var2.get()}'.\nPlease choose a different key.")
+                    if hasattr(button, 'hotkey'):
+                        display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
+                        button.config(text=f"Set Hotkey: [ {display_name} ]")
+                    else:
+                        button.config(text="Set Hotkey")
+                    self.setting_hotkey = False
+                    return
             button.hotkey = key_name
-            self.setup_hotkey(button, area_frame)
-            
             display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
-            button.config(text=f"[ {display_name} ]")
-            print(f"Set area hotkey: {key_name}\n--------------------------")
+            button.config(text=f"Set Hotkey: [ {display_name} ]")
+            self.setup_hotkey(button, area_frame)
             self.setting_hotkey = False
+            # Unhook both temp hooks if they exist
+            if hasattr(button, 'keyboard_hook_temp'):
+                keyboard.unhook(button.keyboard_hook_temp)
+                delattr(button, 'keyboard_hook_temp')
+            if hasattr(button, 'mouse_hook_temp'):
+                mouse.unhook(button.mouse_hook_temp)
+                delattr(button, 'mouse_hook_temp')
             return
-
         def on_mouse_click(event):
-            if not isinstance(event, mouse.ButtonEvent) or event.event_type != mouse.DOWN:
+            if not hasattr(event, 'event_type') or event.event_type != mouse.DOWN:
                 return
-
-            # Early return for left/right mouse buttons
-            if event.button in [1, 2]:
+            if getattr(event, 'button', None) in [1, 2]:
                 messagebox.showerror("Error", "Left and right mouse buttons cannot be used as hotkeys.")
-                # Reset button text to previous state if it exists, or default text
                 if hasattr(button, 'hotkey'):
                     display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
-                    button.config(text=f"[ {display_name} ]")
+                    button.config(text=f"Set Hotkey: [ {display_name} ]")
                 else:
                     button.config(text="Set Hotkey")
                 return
-
             key_name = f'button{event.button}'
-            print(f"Setting mouse button {key_name} as area hotkey")
-            
-            # Remove existing hook for this button only
-            if hasattr(button, 'keyboard_hook'):
-                try:
-                    keyboard.unhook(button.keyboard_hook)
-                    delattr(button, 'keyboard_hook')
-                except:
-                    pass
             if hasattr(button, 'mouse_hook'):
                 try:
                     mouse.unhook(button.mouse_hook)
                     delattr(button, 'mouse_hook')
                 except:
                     pass
-            
+            for area_frame2, hotkey_button2, _, area_name_var2, _, _, _ in self.areas:
+                if hotkey_button2 is not button and hasattr(hotkey_button2, 'hotkey') and hotkey_button2.hotkey == key_name:
+                    messagebox.showwarning("Hotkey Conflict", f"This key is already used by area '{area_name_var2.get()}'.\nPlease choose a different key.")
+                    if hasattr(button, 'hotkey'):
+                        display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
+                        button.config(text=f"Set Hotkey: [ {display_name} ]")
+                    else:
+                        button.config(text="Set Hotkey")
+                    return
             button.hotkey = key_name
+            button.config(text=f"Set Hotkey: [ {key_name} ]")
             self.setup_hotkey(button, area_frame)
-            
-            button.config(text=f"[ {key_name} ]")
-            print(f"Set area hotkey: {key_name}")
-            self.setting_hotkey = False
-
-        # Only remove hooks for this specific button before setting new ones
+            # Unhook both temp hooks if they exist
+            if hasattr(button, 'keyboard_hook_temp'):
+                keyboard.unhook(button.keyboard_hook_temp)
+                delattr(button, 'keyboard_hook_temp')
+            if hasattr(button, 'mouse_hook_temp'):
+                mouse.unhook(button.mouse_hook_temp)
+                delattr(button, 'mouse_hook_temp')
+            return
+        # Clean up previous hooks
         if hasattr(button, 'keyboard_hook'):
             try:
                 keyboard.unhook(button.keyboard_hook)
@@ -1668,10 +1773,9 @@ class GameTextReader:
                 delattr(button, 'mouse_hook')
             except Exception as e:
                 print(f"Error cleaning up mouse hook: {e}")
-
         button.config(text="Press any key...")
-        button.keyboard_hook = keyboard.on_press(on_key_press)
-        button.mouse_hook = mouse.hook(on_mouse_click)
+        button.keyboard_hook_temp = keyboard.on_press(on_key_press)
+        button.mouse_hook_temp = mouse.hook(on_mouse_click)
 
     def save_layout(self):
         # Check if there are no areas
@@ -1679,8 +1783,10 @@ class GameTextReader:
             messagebox.showerror("Error", "There is nothing to save.")
             return
 
-        # Check if all areas have coordinates set
+        # Check if all areas have coordinates set, but ignore Auto Read
         for area_frame, _, _, area_name_var, _, _, _ in self.areas:
+            if area_name_var.get() == "Auto Read":
+                continue
             if not hasattr(area_frame, 'area_coords'):
                 messagebox.showerror("Error", f"Area '{area_name_var.get()}' does not have a defined area, remove it or configure before saving.")
                 return
@@ -1757,10 +1863,12 @@ class GameTextReader:
                 with open(file_path, 'r') as f:
                     layout = json.load(f)
                     
-                # Clear existing areas and processing settings
-                for area_frame, _, _, _, _, _, _ in self.areas:
-                    area_frame.destroy()
-                self.areas.clear()
+                # Clear only user-added areas and processing settings (keep permanent area)
+                if self.areas:
+                    # Always keep the first (permanent) area
+                    for area in self.areas[1:]:
+                        area[0].destroy()
+                    self.areas = self.areas[:1]
                 self.processing_settings.clear()
 
                 save_version = layout.get("version", "0.0")
@@ -1802,10 +1910,6 @@ class GameTextReader:
                     self.speaker.Volume = 100
                 
                 # Clean up existing areas and unhook all hotkeys
-                for area in self.areas:
-                    area[0].destroy()
-                self.areas.clear()
-                
                 # Clean up images
                 for image in self.latest_images.values():
                     try:
@@ -1833,16 +1937,24 @@ class GameTextReader:
                     self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
                     print(f"Loaded Stop hotkey: {saved_stop_hotkey}")
 
-                # Load all the areas
+                # --- Check for Auto Read hotkey conflicts before registering ---
+                auto_read_hotkey = None
+                if self.areas and hasattr(self.areas[0][1], 'hotkey'):
+                    auto_read_hotkey = self.areas[0][1].hotkey
+                conflict_area_name = None
                 for area_info in layout.get("areas", []):
-                    # Create a new area using add_read_area
-                    self.add_read_area()
+                    if auto_read_hotkey and area_info.get("hotkey") == auto_read_hotkey:
+                        conflict_area_name = area_info["name"]
+                        break
+                # Load all the areas (under permanent area)
+                for area_info in layout.get("areas", []):
+                    # Create a new area using add_read_area (removable, editable, normal name)
+                    self.add_read_area(removable=True, editable_name=True, area_name=area_info["name"])
                     
                     # Get the newly created area (last one in the list)
                     area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var = self.areas[-1]
                     
-                    # Set the area name and coordinates
-                    area_name_var.set(area_info["name"])
+                    # Set the area coordinates
                     area_frame.area_coords = area_info["coords"]
                     
                     # Set the hotkey if it exists
@@ -1887,6 +1999,17 @@ class GameTextReader:
                         self.latest_images[area_name_var.get()] = processed_image
                     else:
                         self.latest_images[area_name_var.get()] = screenshot
+                # --- Show popup if conflict detected ---
+                if conflict_area_name:
+                    # Restore to messagebox.showwarning with requested text
+                    hotkey_val = auto_read_hotkey if auto_read_hotkey else "?"
+                    messagebox.showinfo(
+                        "Hotkey Conflict",
+                        f"Detected same Hotkey!\n\nAuto Read Hotkey = {hotkey_val}\n{conflict_area_name} Hotkey = {hotkey_val}\n\nPlease set a new hotkey for AutoRead if you still want this function.")
+                    # Optionally: clear the Auto Read hotkey registration
+                    if self.areas and hasattr(self.areas[0][1], 'hotkey'):
+                        del self.areas[0][1].hotkey
+                        self.areas[0][1].config(text="Set Hotkey")
 
                 print(f"Layout loaded from {file_path}\n--------------------------")
                 
@@ -1973,20 +2096,29 @@ class GameTextReader:
 
                 # Separate handling for stop button
                 if hasattr(button, 'is_stop_button'):
-                   # print(f"Stop hotkey '{button.hotkey}' pressed!")
                     self.root.after_idle(self.stop_speaking)
                     return True
-                
-                # Only handle area reading for non-stop buttons
-                else:
-                    if hasattr(button, '_is_processing') and button._is_processing:
-                        return True
-                        
-                    button._is_processing = True
-                    self.stop_speaking()
-                    threading.Thread(target=self.read_area, args=(area_frame,), daemon=True).start()
-                    self.root.after(100, lambda: setattr(button, '_is_processing', False))
+
+                # Special handling for Auto Read area: simulate Select Area button press
+                area_name = None
+                for area in self.areas:
+                    if area[1] is button:
+                        area_name = area[3].get() if hasattr(area[3], 'get') else None
+                        set_area_btn = area[2]
+                        break
+                if area_name == "Auto Read":
+                    # Simulate Select Area button press (call set_area as the button would)
+                    self.root.after_idle(lambda: self.set_area(area[0], area[3], set_area_btn))
                     return True
+
+                # Only handle area reading for non-stop buttons (all other areas)
+                if hasattr(button, '_is_processing') and button._is_processing:
+                    return True
+                button._is_processing = True
+                self.stop_speaking()
+                threading.Thread(target=self.read_area, args=(area_frame,), daemon=True).start()
+                self.root.after(100, lambda: setattr(button, '_is_processing', False))
+                return True
 
         def on_mouse_click(event):
             if self.setting_hotkey:
@@ -2031,6 +2163,14 @@ class GameTextReader:
             return
 
         if not hasattr(area_frame, 'area_coords'):
+            # Suppress error for Auto Read area
+            area_info = None
+            for area in self.areas:
+                if area[0] is area_frame:
+                    area_info = area
+                    break
+            if area_info and area_info[3].get() == "Auto Read":
+                return
             messagebox.showerror("Error", "No area coordinates set. Click Set Area to set one.")
             return
 
@@ -2367,8 +2507,29 @@ def capture_screen_area(x1, y1, x2, y2):
     return img
 
 if __name__ == "__main__":
+    import tempfile, os, json
     root = tk.Tk()
     app = GameTextReader(root)
-    # Simulate one press of the "Add area..." button
-    app.add_read_area()
+    # Create permanent area at the top
+    app.add_read_area(removable=False, editable_name=False, area_name="Auto Read")
+    # Try to load settings for Auto Read area from temp folder
+    temp_path = os.path.join(tempfile.gettempdir(), 'auto_read_settings.json')
+    if os.path.exists(temp_path) and app.areas:
+        try:
+            with open(temp_path, 'r') as f:
+                settings = json.load(f)
+            # Find the permanent area and set its settings
+            area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var = app.areas[0]
+            preprocess_var.set(settings.get('preprocess', False))
+            voice_var.set(settings.get('voice', 'Select Voice'))
+            speed_var.set(settings.get('speed', '100'))
+            # Restore hotkey if present
+            hotkey = settings.get('hotkey')
+            if hotkey:
+                hotkey_button.hotkey = hotkey
+                display_name = hotkey.replace('num_', 'num:') if hotkey.startswith('num_') else hotkey
+                hotkey_button.config(text=f"Hotkey: [ {display_name} ]")
+                app.setup_hotkey(hotkey_button, area_frame)
+        except Exception as e:
+            print(f"Failed to load Auto Read settings: {e}")
     root.mainloop()
