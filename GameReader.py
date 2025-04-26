@@ -26,12 +26,12 @@ import win32con
 import requests  # For checking updates
 import re  # For version extraction
 
-APP_VERSION = "0.7.5"
+APP_VERSION = "0.7.6"
 
 CHANGELOG = """
 - Changelog -  
-- Fixed a bug where the auto-read feature would crash the application.
-- Fixed so hotkeys are disabled on pop-ups for a better user experience.
+ - Fixed a bug where the Auto Read function didn't work with fullscreen applications.
+ - Improved overall implementation of the AutoRead feature.
 """
 
 
@@ -552,12 +552,62 @@ class ImageProcessingWindow:
 
         # Store a reference to game_text_reader before destroying window
         game_text_reader = self.game_text_reader
-        
+
+        # --- AUTO SAVE for Auto Read area ---
+        if area_name == "Auto Read":
+            import tempfile, os, json
+            # Try to get the preprocess, voice, and speed settings for Auto Read area
+            preprocess = None
+            voice = None
+            speed = None
+            for area_frame, _, _, area_name_var, preprocess_var, voice_var, speed_var in game_text_reader.areas:
+                if area_name_var.get() == area_name:
+                    preprocess = preprocess_var.get() if hasattr(preprocess_var, 'get') else preprocess_var
+                    voice = voice_var.get() if hasattr(voice_var, 'get') else voice_var
+                    speed = speed_var.get() if hasattr(speed_var, 'get') else speed_var
+                    break
+            # Find the hotkey for the Auto Read area
+            hotkey = None
+            for area_frame2, hotkey_button2, _, area_name_var2, _, _, _ in game_text_reader.areas:
+                if area_name_var2.get() == area_name:
+                    hotkey = getattr(hotkey_button2, 'hotkey', None)
+                    break
+            # Save to temp file
+            settings = {
+                'preprocess': preprocess,
+                'voice': voice,
+                'speed': speed,
+                'brightness': self.brightness_var.get(),
+                'contrast': self.contrast_var.get(),
+                'saturation': self.saturation_var.get(),
+                'sharpness': self.sharpness_var.get(),
+                'blur': self.blur_var.get(),
+                'hue': self.hue_var.get(),
+                'exposure': self.exposure_var.get(),
+                'threshold': self.threshold_var.get() if self.threshold_enabled_var.get() else None,
+                'threshold_enabled': self.threshold_enabled_var.get(),
+                'hotkey': hotkey,
+                'stop_read_on_select': getattr(game_text_reader, 'interrupt_on_new_scan_var', tk.BooleanVar(value=True)).get() if hasattr(game_text_reader, 'interrupt_on_new_scan_var') else True,
+            }
+            temp_path = os.path.join(tempfile.gettempdir(), 'auto_read_settings.json')
+            with open(temp_path, 'w') as f:
+                json.dump(settings, f)
+            # Show status message if available
+            if hasattr(game_text_reader, 'status_label'):
+                game_text_reader.status_label.config(text="Auto Read area settings saved (auto)")
+                if hasattr(game_text_reader, '_feedback_timer') and game_text_reader._feedback_timer:
+                    game_text_reader.root.after_cancel(game_text_reader._feedback_timer)
+                game_text_reader._feedback_timer = game_text_reader.root.after(2000, lambda: game_text_reader.status_label.config(text=""))
+            # Destroy window (if not already destroyed)
+            self.window.destroy()
+            return
+
+        # For all other areas, continue with manual/dialog save logic
         # Destroy window
         self.window.destroy()
-        
         # Now that everything is properly synchronized, save the layout
         game_text_reader.save_layout()
+
 
     def update_preview(self, *args):
         """Update the preview with current settings and scale"""
@@ -690,7 +740,7 @@ class GameTextReader:
         local_version = APP_VERSION
         threading.Thread(target=lambda: check_for_update(local_version), daemon=True).start()
         # --- End update check ---
-        self.root.geometry("950x180")  # Initial window size (height reduced for less vertical tallness)
+        self.root.geometry("1100x180")  # Initial window size (height reduced for less vertical tallness)
         self.layout_file = tk.StringVar()
         self.latest_images = {}  # Use a dictionary to store images for each area
         self.latest_area_name = tk.StringVar()  # Ensure this is defined
@@ -759,7 +809,10 @@ class GameTextReader:
 
     def speak_text(self, text):
         """Speak text using win32com.client (SAPI.SpVoice)."""
-        if self.is_speaking:
+        # Always check and stop speech if interrupt is enabled
+        if hasattr(self, 'interrupt_on_new_scan_var') and self.interrupt_on_new_scan_var.get():
+            self.stop_speaking()  # Always attempt to stop, even if not currently speaking
+        elif self.is_speaking:
             print("Already speaking. Please stop the current speech first.")
             return
         self.is_speaking = True
@@ -866,6 +919,7 @@ class GameTextReader:
         self.create_checkbox(checkbox_frame, "Ignore gibberish:", self.ignore_gibberish_var, side='left', padx=5)
         self.create_checkbox(checkbox_frame, "Pause at punctuation:", self.pause_at_punctuation_var, side='left', padx=5)
         self.create_checkbox(checkbox_frame, "Fullscreen mode:", self.fullscreen_mode_var, side='left', padx=5)
+
         
         # Add read area button in a separate frame
         add_area_frame = tk.Frame(self.root)
@@ -1173,10 +1227,10 @@ class GameTextReader:
 
             ("AutoRead\n", 'bold'),
             ("------------------------\n", None),
-            ("When assigned a hotkey, the program will automatically read the text in the selected area.\n", None),
-            ("The save button here will save the settings for the AutoRead area only.\n", None),
-            ("This save file can be found here: C:\\Users\\<username>\\AppData\\Local\\Temp Filename: auto_read_settings.json\n\n", None),
-            
+("When assigned a hotkey, the program will automatically read the text in the selected area.\n", None),
+("The save button here will save the settings for the AutoRead area only.\n", None),
+("Note! This works best with applications in windowed borderless mode.\n", None),
+("This save file can be found here: C:\\Users\\<username>\\AppData\\Local\\Temp\nFilename: auto_read_settings.json\n\n", None),
             
             ("Add read area\n", 'bold'),
             ("------------------------\n", None),
@@ -1493,6 +1547,10 @@ class GameTextReader:
             tk.Label(area_frame, text="").pack(side="left")  # No symbol for last separator; empty label
         else:
             # Save button for Auto Read area
+            # Add 'Stop read on select' checkbox to the left of Save button
+            self.interrupt_on_new_scan_var = tk.BooleanVar(value=True)
+            stop_read_checkbox = tk.Checkbutton(area_frame, text="Stop read on select", variable=self.interrupt_on_new_scan_var)
+            stop_read_checkbox.pack(side="left", padx=(10, 2))
             def save_auto_read_settings():
                 import tempfile, os, json
                 # Find the hotkey for the Auto Read area
@@ -1507,6 +1565,7 @@ class GameTextReader:
                     'voice': voice_var.get(),
                     'speed': speed_var.get(),
                     'hotkey': hotkey,
+                    'stop_read_on_select': self.interrupt_on_new_scan_var.get(),
                 }
                 # Optionally add more settings as needed
                 temp_path = os.path.join(tempfile.gettempdir(), 'auto_read_settings.json')
@@ -1629,7 +1688,10 @@ class GameTextReader:
         max_height = base_height + 5 * area_row_height
         if cur_width < window_width or cur_height < total_height:
             # Always cap the height
-            self.root.geometry(f"{window_width}x{min(total_height, max_height)}")
+            # self.root.geometry(f"{window_width}x{min(total_height, max_height)}")  # Disabled dynamic resizing
+            pass  # No dynamic resizing, keep window fixed
+        # Window size is now fixed from __init__
+
         self.root.update_idletasks()  # Ensure geometry is applied
 
     def set_area(self, frame, area_name_var, set_area_button):
@@ -1675,6 +1737,9 @@ class GameTextReader:
         def on_release(event):
             nonlocal x1, y1, x2, y2
             if not selection_cancelled:
+                # Stop speech on mouse release if the checkbox is checked
+                if hasattr(self, 'interrupt_on_new_scan_var') and self.interrupt_on_new_scan_var.get():
+                    self.stop_speaking()
                 # Convert canvas coordinates to screen coordinates for the final area
                 x2 = event.x_root
                 y2 = event.y_root
@@ -1770,7 +1835,7 @@ class GameTextReader:
         
         # Set window properties
         select_area_window.attributes("-alpha", 0.5)  
-       # select_area_window.attributes("-topmost", True)  # Keep window on top
+        select_area_window.attributes("-topmost", True)  # Keep window on top
         
         # Create border rectangle with more visible red border
         border = canvas.create_rectangle(0, 0, 0, 0,
@@ -2751,6 +2816,49 @@ if __name__ == "__main__":
             preprocess_var.set(settings.get('preprocess', False))
             voice_var.set(settings.get('voice', 'Select Voice'))
             speed_var.set(settings.get('speed', '100'))
+            # Restore image processing settings
+            brightness = settings.get('brightness', 1.0)
+            contrast = settings.get('contrast', 1.0)
+            saturation = settings.get('saturation', 1.0)
+            sharpness = settings.get('sharpness', 1.0)
+            blur = settings.get('blur', 0.0)
+            hue = settings.get('hue', 0.0)
+            exposure = settings.get('exposure', 1.0)
+            threshold = settings.get('threshold', 128)
+            threshold_enabled = settings.get('threshold_enabled', False)
+            # Set these in the processing_settings dict
+            app.processing_settings['Auto Read'] = {
+                'brightness': brightness,
+                'contrast': contrast,
+                'saturation': saturation,
+                'sharpness': sharpness,
+                'blur': blur,
+                'hue': hue,
+                'exposure': exposure,
+                'threshold': threshold,
+                'threshold_enabled': threshold_enabled,
+            }
+            # If the UI for these exists, set them as well
+            if hasattr(app, 'processing_settings_widgets'):
+                widgets = app.processing_settings_widgets.get('Auto Read', {})
+                if 'brightness' in widgets:
+                    widgets['brightness'].set(brightness)
+                if 'contrast' in widgets:
+                    widgets['contrast'].set(contrast)
+                if 'saturation' in widgets:
+                    widgets['saturation'].set(saturation)
+                if 'sharpness' in widgets:
+                    widgets['sharpness'].set(sharpness)
+                if 'blur' in widgets:
+                    widgets['blur'].set(blur)
+                if 'hue' in widgets:
+                    widgets['hue'].set(hue)
+                if 'exposure' in widgets:
+                    widgets['exposure'].set(exposure)
+                if 'threshold' in widgets:
+                    widgets['threshold'].set(threshold)
+                if 'threshold_enabled' in widgets:
+                    widgets['threshold_enabled'].set(threshold_enabled)
             # Restore hotkey if present
             hotkey = settings.get('hotkey')
             if hotkey:
@@ -2758,6 +2866,9 @@ if __name__ == "__main__":
                 display_name = hotkey.replace('num_', 'num:') if hotkey.startswith('num_') else hotkey
                 hotkey_button.config(text=f"Hotkey: [ {display_name} ]")
                 app.setup_hotkey(hotkey_button, area_frame)
+            # Restore 'Stop read on select' checkbox if present
+            if hasattr(app, 'interrupt_on_new_scan_var'):
+                app.interrupt_on_new_scan_var.set(settings.get('stop_read_on_select', True))
         except Exception as e:
             print(f"Failed to load Auto Read settings: {e}")
     root.mainloop()
