@@ -27,4 +27,5 @@ You can contact me via this Google Form: https://forms.gle/8YBU8atkgwjyzdM79
 
 Buy me a Coffe here: https://buymeacoffee.com/mertennor
 
-![GameReader](https://github.com/user-attachments/assets/138a49e8-53e9-4eb5-9734-9e4755ebed30)
+![Reader_v0 7](https://github.com/user-attachments/assets/29e0c6c3-c8c6-4d98-bdb2-4e1df2f6bd4a)
+
