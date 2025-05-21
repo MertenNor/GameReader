@@ -2,36 +2,47 @@
 ###  I know.. This code is.. well not great, all made with AI, but it works. feel free to make any changes!
 ###
 
-import tkinter as tk
-from tkinter import filedialog, ttk, messagebox, simpledialog
-from PIL import ImageGrab, Image, ImageTk, ImageEnhance, ImageFilter
-from functools import partial
-import pytesseract
-import pyttsx3
-import json
-import keyboard
-import threading
-import sys
-import io
+# Standard library imports
 import datetime
+import io
+import json
 import os
-import win32com.client
-import mouse
-import win32gui
+import re
+import sys
+import threading
 import time
-import webbrowser
-import win32api
-import win32ui
-import win32con
-import requests  # For checking updates
-import re  # For version extraction
+from functools import partial
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
-APP_VERSION = "0.7.6"
+# Third-party imports
+import keyboard
+import mouse
+import pyttsx3
+import pytesseract
+import requests
+import tkinter as tk
+import win32api
+import win32com.client
+import win32con
+import win32gui
+import win32ui
+from PIL import Image, ImageEnhance, ImageFilter, ImageGrab, ImageTk
+
+APP_VERSION = "0.8"
 
 CHANGELOG = """
-- Changelog -  
- - Fixed a bug where the Auto Read function didn't work with fullscreen applications.
- - Improved overall implementation of the AutoRead feature.
+- Added support for reading game units. Example: "xp" will be read as "Experience Points"
+- Added support for sentences in the ignored word list.
+- Added support for mouse buttons as hotkeys.
+- Added checkbox for better detection of, example, km/h  / mp/h  this wasnt always detected before.
+- Added right-click context menu for copy / paste / select all.
+- Added the ability to drag and drop save files on the main window to load them.
+
+-- Other --
+- Fixed a bug where you could scroll in the main window when there was no scrollbar.
+- Added more info and cleaned up the info / help window.
+- Added a "Program saves..." button that will direct you to the folder where the program saves files.
+- Changed the Update alert window to accommodate larger change logs. 
 """
 
 
@@ -43,8 +54,6 @@ sys.stdout = log_buffer
 
 # --- Custom Hotkey Conflict Warning Dialog (No Symbol, Styled OK Button) ---
 def show_thinkr_warning(game_reader, area_name):
-    import keyboard
-    import mouse
     # Disable all hotkeys when dialog is shown
     try:
         keyboard.unhook_all()
@@ -106,17 +115,29 @@ def show_thinkr_warning(game_reader, area_name):
 
 def restore_all_hotkeys():
     """
-    Restore all hotkeys for the application. This function should be adapted to your app's hotkey storage logic.
+    Restore all hotkeys for the application.
     """
-    import keyboard
-    import mouse
-    # Example: restore hotkeys for each area if you have a list/dict of them
-    # Replace the following with your actual hotkey setup logic
-    if hasattr(globals(), 'app_hotkeys'):
-        for hotkey, callback in globals()['app_hotkeys'].items():
-            keyboard.add_hotkey(hotkey, callback)
-    # If you use mouse hotkeys, add them similarly
-    # mouse.add_hotkey(...)
+    try:
+        # Restore keyboard hotkeys
+        for area in self.areas:
+            hotkey_button = area[1]
+            if hasattr(hotkey_button, 'hotkey'):
+                try:
+                    keyboard.add_hotkey(hotkey_button.hotkey, lambda: self.setup_hotkey(hotkey_button, area[0]))
+                except Exception as e:
+                    print(f"Warning: Error restoring keyboard hotkey: {e}")
+        
+        # Restore mouse hotkeys
+        for area in self.areas:
+            hotkey_button = area[1]
+            if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey.startswith('button'):
+                try:
+                    mouse.add_hotkey(hotkey_button.hotkey, lambda: self.setup_hotkey(hotkey_button, area[0]))
+                except Exception as e:
+                    print(f"Warning: Error restoring mouse hotkey: {e}")
+        
+    except Exception as e:
+        print(f"Warning: Error in restore_all_hotkeys: {e}")
 
 class ConsoleWindow:
     def __init__(self, root, log_buffer, layout_file_var, latest_images, latest_area_name_var):
@@ -175,6 +196,23 @@ class ConsoleWindow:
         self.text_widget.pack(fill='both', expand=True)
         self.text_widget.config(state=tk.DISABLED)
 
+        # Enable mouse wheel scrolling for the debug log
+        def _on_mousewheel_debug(event):
+            self.text_widget.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+            return "break"
+        def _bind_mousewheel_debug(event):
+            self.text_widget.bind_all('<MouseWheel>', _on_mousewheel_debug)
+        def _unbind_mousewheel_debug(event):
+            self.text_widget.unbind_all('<MouseWheel>')
+        self.text_widget.bind('<Enter>', _bind_mousewheel_debug)
+        self.text_widget.bind('<Leave>', _unbind_mousewheel_debug)
+
+        # Add right-click context menu
+        self.context_menu = tk.Menu(self.text_widget, tearoff=0)
+        self.context_menu.add_command(label="Copy", command=self.copy_selection)
+        self.context_menu.add_command(label="Select All", command=self.select_all)
+        self.text_widget.bind("<Button-3>", self.show_context_menu)
+
         self.log_buffer = log_buffer
         self.layout_file_var = layout_file_var
         self.latest_area_name_var = latest_area_name_var
@@ -184,6 +222,26 @@ class ConsoleWindow:
         self.MAX_LINES = 100
         
         self.update_console()
+
+    def show_context_menu(self, event):
+        """Show the context menu at the mouse position."""
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def copy_selection(self):
+        """Copy selected text to clipboard."""
+        try:
+            selected_text = self.text_widget.get("sel.first", "sel.last")
+            self.window.clipboard_clear()
+            self.window.clipboard_append(selected_text)
+        except tk.TclError:
+            pass  # No text selected
+
+    def select_all(self):
+        """Select all text in the widget."""
+        self.text_widget.tag_add("sel", "1.0", "end")
 
     def update_image_display(self, *args):
         if not self.window.winfo_exists():
@@ -302,7 +360,7 @@ class ConsoleWindow:
 class ImageProcessingWindow:
     def __init__(self, root, area_name, latest_images, settings, game_text_reader):
         self.window = tk.Toplevel(root)
-        self.window.title(f"Customize Processing for {area_name}")
+        self.window.title(f"Image Processing for: {area_name}")
         self.area_name = area_name
         self.latest_images = latest_images
         self.settings = settings
@@ -328,7 +386,7 @@ class ImageProcessingWindow:
         self.image_on_canvas = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image)
         
         # Add a label under the image with larger text - centered
-        info_text = f"Processing applies to unprocessed images; results may differ if the preview is already processed.\n \nShowing previous image captured in area: {area_name}"
+        info_text = f"Showing previous image captured in area: {area_name}\n\nProcessing applies to unprocessed images; results may differ if the preview is already processed."
         info_label = ttk.Label(self.image_frame, text=info_text, font=("Helvetica", 12), justify='center')
         info_label.pack(pady=(10, 0), fill='x')
 
@@ -389,8 +447,22 @@ class ImageProcessingWindow:
         slider.set(initial)
         slider.pack()
 
+        # Create entry with context menu
         entry = ttk.Entry(label_frame, textvariable=entry_var)
         entry.pack()
+        
+        # Add context menu for copy/paste
+        entry_menu = tk.Menu(entry, tearoff=0)
+        entry_menu.add_command(label="Cut", command=lambda: entry.event_generate('<<Cut>>'))
+        entry_menu.add_command(label="Copy", command=lambda: entry.event_generate('<<Copy>>'))
+        entry_menu.add_command(label="Paste", command=lambda: entry.event_generate('<<Paste>>'))
+        entry_menu.add_separator()
+        entry_menu.add_command(label="Select All", command=lambda: entry.selection_range(0, 'end'))
+        
+        def show_entry_menu(event):
+            entry_menu.post(event.x_root, event.y_root)
+            
+        entry.bind('<Button-3>', show_entry_menu)
     
         ttk.Button(label_frame, text="Reset", command=lambda: self.reset_slider(slider, entry, initial, variable)).pack()
 
@@ -536,7 +608,7 @@ class ImageProcessingWindow:
             def on_cancel():
                 self.dialog_result = False
                 dialog.destroy()
-            
+                
             # Add buttons
             save_button = tk.Button(button_frame, text="Save...", command=on_save, width=10)
             save_button.pack(side=tk.LEFT, padx=10)
@@ -689,10 +761,10 @@ def extract_changelog_from_code(code):
         return match.group(3).strip()
     return None
 
-def check_for_update(local_version):
+def check_for_update(local_version, force=False):  #for testing the updatewindow. false for release.
     """
     Fetch the remote GameReader.py from GitHub, extract version and changelog, compare to local_version.
-    If remote version is newer, show a popup.
+    If remote version is newer or force=True, show a popup.
     """
     GITHUB_RAW_URL = "https://raw.githubusercontent.com/MertenNor/GameReader/main/GameReader.py"
     try:
@@ -701,22 +773,89 @@ def check_for_update(local_version):
             remote_content = resp.text
             remote_version = extract_version_from_code(remote_content)
             remote_changelog = extract_changelog_from_code(remote_content)
-            if remote_version and version_tuple(remote_version) > version_tuple(local_version):
-                # Show popup
+            if force or (remote_version and version_tuple(remote_version) > version_tuple(local_version)):
+                # Create a custom popup window
                 import tkinter as tk
-                from tkinter import messagebox
+                from tkinter import ttk
+                
+                popup = tk.Toplevel()
+                popup.title("Update Available")
+                popup.geometry("750x350")  # Set initial size
+                popup.minsize(400, 150)    # Set minimum size
+                
+                # Make window resizable
+                popup.resizable(True, True)
+                
+                # Configure grid weights
+                popup.grid_rowconfigure(0, weight=1)
+                popup.grid_columnconfigure(0, weight=1)
+                
+                # Create main frame with padding
+                main_frame = ttk.Frame(popup, padding="20")
+                main_frame.grid(row=0, column=0, sticky='nsew')
+                main_frame.grid_rowconfigure(1, weight=1)  # Make text area expandable
+                main_frame.grid_columnconfigure(0, weight=1)
+                
+                # Version info
+                version_frame = ttk.Frame(main_frame)
+                version_frame.grid(row=0, column=0, sticky='w', pady=(0, 15))
+                
+                ttk.Label(version_frame, text="A new version of GameReader is available!", 
+                         font=('Helvetica', 12, 'bold')).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 10))
+                
+                ttk.Label(version_frame, text=f"Current version: {local_version}", font=('Helvetica', 10)).grid(row=1, column=0, sticky='w')
+                ttk.Label(version_frame, text=f"Latest version: {remote_version}", font=('Helvetica', 10)).grid(row=2, column=0, sticky='w')
+                
+                # Changelog section
+                ttk.Label(main_frame, text="What's new:", font=('Helvetica', 10, 'bold')).grid(row=1, column=0, sticky='nw', pady=(10, 5))
+                
+                # Create a frame for the text widget and scrollbar
+                text_frame = ttk.Frame(main_frame)
+                text_frame.grid(row=2, column=0, sticky='nsew', pady=(0, 15))
+                text_frame.grid_rowconfigure(0, weight=1)
+                text_frame.grid_columnconfigure(0, weight=1)
+                
+                # Add text widget with scrollbar
+                text = tk.Text(text_frame, wrap=tk.WORD, width=60, height=10, 
+                             padx=10, pady=10, relief='flat', bg='#f0f0f0')
+                scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text.yview)
+                text.configure(yscrollcommand=scrollbar.set)
+                
+                text.grid(row=0, column=0, sticky='nsew')
+                scrollbar.grid(row=0, column=1, sticky='ns')
+                
+                # Insert changelog text
+                changelog = remote_changelog if remote_changelog else "No changelog available."
+                text.insert('1.0', changelog)
+                text.config(state='disabled')  # Make text read-only
+                
+                # Buttons frame
+                button_frame = ttk.Frame(main_frame)
+                button_frame.grid(row=3, column=0, sticky='e')
+                
                 def open_github():
                     import webbrowser
-                    webbrowser.open('https://github.com/MertenNor/GameReader')
-                root = tk._default_root or tk.Tk()
-                if not tk._default_root:
-                    root.withdraw()
-                msg = f"A new version of GameReader is available!\n\nLocal version: {local_version}\nLatest version: {remote_version}"
-                if remote_changelog:
-                    msg += f"\n\nWhat's new:\n{remote_changelog}"
-                msg += "\n\nVisit GitHub to download the update."
-                if messagebox.askyesno("Update Available", msg + "\n\nOpen GitHub page now?"):
-                    open_github()
+                    webbrowser.open('https://github.com/MertenNor/GameReader/releases')
+                    popup.destroy()
+                
+                def close_popup():
+                    popup.destroy()
+                
+                ttk.Button(button_frame, text="Later...", command=close_popup).pack(side='right', padx=5)
+                ttk.Button(button_frame, text="Open download page", command=open_github).pack(side='right', padx=5)
+                
+                # Center the popup on screen
+                popup.update_idletasks()
+                width = popup.winfo_width()
+                height = popup.winfo_height()
+                x = (popup.winfo_screenwidth() // 2) - (width // 2)
+                y = (popup.winfo_screenheight() // 2) - (height // 2)
+                popup.geometry(f'{width}x{height}+{x}+{y}')
+                
+                # Make popup modal
+                popup.transient(tk._default_root or popup)
+                popup.grab_set()
+                popup.wait_window()
     except Exception as e:
         # Fail silently if no internet or any error
         pass
@@ -738,9 +877,10 @@ class GameTextReader:
         self.root.title(f"Game Text Reader v{APP_VERSION}")
         # --- Update check on startup ---
         local_version = APP_VERSION
-        threading.Thread(target=lambda: check_for_update(local_version), daemon=True).start()
+        FORCE_UPDATE_CHECK = False  # Set to True to force update popup, False for normal behavior
+        threading.Thread(target=lambda: check_for_update(local_version, force=FORCE_UPDATE_CHECK), daemon=True).start()
         # --- End update check ---
-        self.root.geometry("1100x180")  # Initial window size (height reduced for less vertical tallness)
+        self.root.geometry("1115x180")  # Initial window size (height reduced for less vertical tallness)
         self.layout_file = tk.StringVar()
         self.latest_images = {}  # Use a dictionary to store images for each area
         self.latest_area_name = tk.StringVar()  # Ensure this is defined
@@ -764,9 +904,12 @@ class GameTextReader:
         self.pause_at_punctuation_var = tk.BooleanVar(value=False)
         self.fullscreen_mode_var = tk.BooleanVar(value=False)
 
+        # Hotkey management
         self.hotkey_scancodes = {}  # Dictionary to store scan codes for hotkeys
         self.setting_hotkey = False  # Flag to track if we're in hotkey setting mode
-        self.unhook_timer = None  # Add this line
+        self.unhook_timer = None  # Timer for hotkey unhooking
+        self.keyboard_hooks = []  # List to track keyboard hooks
+        self.mouse_hooks = []  # List to track mouse hooks
         
         # Setup Tesseract command path if it's not in your PATH
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -795,6 +938,13 @@ class GameTextReader:
         self.ignore_gibberish_var = tk.BooleanVar(value=False)  # Variable for the gibberish checkbox
         self.pause_at_punctuation_var = tk.BooleanVar(value=False)  # Variable for punctuation pauses
         self.fullscreen_mode_var = tk.BooleanVar(value=False)  # Variable for fullscreen mode
+        # Add variable for better measurement unit detection
+        self.better_unit_detection_var = tk.BooleanVar(value=False)
+        # Add variable for read game units
+        self.read_game_units_var = tk.BooleanVar(value=False)
+
+        # Load game units from JSON file
+        self.game_units = self.load_game_units()
 
         self.setup_gui()
         self.voices = self.engine.getProperty('voices')  # Get available voices
@@ -806,6 +956,15 @@ class GameTextReader:
         
         # Add this line to handle window closing
         root.protocol("WM_DELETE_WINDOW", lambda: (self.cleanup(), root.destroy()))
+        
+        # Track if there are unsaved changes
+        self._has_unsaved_changes = False
+        
+        # Enable drag and drop using TkinterDnD2
+        root.drop_target_register(DND_FILES)
+        root.dnd_bind('<<Drop>>', self.on_drop)
+        root.dnd_bind('<<DropEnter>>', lambda e: 'break')
+        root.dnd_bind('<<DropPosition>>', lambda e: 'break')
 
     def speak_text(self, text):
         """Speak text using win32com.client (SAPI.SpVoice)."""
@@ -894,6 +1053,11 @@ class GameTextReader:
         layout_buttons_frame = tk.Frame(control_frame)
         layout_buttons_frame.pack(side='right')
         
+        # Add Program Saves button
+        program_saves_button = tk.Button(layout_buttons_frame, text="Program Saves...", 
+                                       command=self.open_game_reader_folder)
+        program_saves_button.pack(side='left', padx=5)
+        
         save_button = tk.Button(layout_buttons_frame, text="Save Layout", command=self.save_layout)
         save_button.pack(side='left', padx=5)
         
@@ -906,8 +1070,21 @@ class GameTextReader:
         filter_frame.pack(fill='x', pady=5)
         
         tk.Label(filter_frame, text="Ignored Word List:").pack(side='left')
-        self.bad_word_entry = tk.Entry(filter_frame, textvariable=self.bad_word_list)
+        self.bad_word_entry = ttk.Entry(filter_frame, textvariable=self.bad_word_list)
         self.bad_word_entry.pack(side='left', fill='x', expand=True)
+        
+        # Add context menu for copy/paste
+        self.bad_word_menu = tk.Menu(self.root, tearoff=0)
+        self.bad_word_menu.add_command(label="Cut", command=lambda: self.bad_word_entry.event_generate('<<Cut>>'))
+        self.bad_word_menu.add_command(label="Copy", command=lambda: self.bad_word_entry.event_generate('<<Copy>>'))
+        self.bad_word_menu.add_command(label="Paste", command=lambda: self.bad_word_entry.event_generate('<<Paste>>'))
+        self.bad_word_menu.add_separator()
+        self.bad_word_menu.add_command(label="Select All", command=lambda: self.bad_word_entry.selection_range(0, 'end'))
+        
+        def show_bad_word_menu(event):
+            self.bad_word_menu.post(event.x_root, event.y_root)
+            
+        self.bad_word_entry.bind('<Button-3>', show_bad_word_menu)
         
         # Single line of checkboxes
         checkbox_frame = tk.Frame(options_frame)
@@ -918,6 +1095,10 @@ class GameTextReader:
         self.create_checkbox(checkbox_frame, "Ignore previous spoken words:", self.ignore_previous_var, side='left', padx=5)
         self.create_checkbox(checkbox_frame, "Ignore gibberish:", self.ignore_gibberish_var, side='left', padx=5)
         self.create_checkbox(checkbox_frame, "Pause at punctuation:", self.pause_at_punctuation_var, side='left', padx=5)
+        # Add the new checkbox for better unit detection before fullscreen
+        self.create_checkbox(checkbox_frame, "Better unit detection:", self.better_unit_detection_var, side='left', padx=5)
+        # Add the new checkbox for read game units
+        self.create_checkbox(checkbox_frame, "Read gamer units:", self.read_game_units_var, side='left', padx=5)
         self.create_checkbox(checkbox_frame, "Fullscreen mode:", self.fullscreen_mode_var, side='left', padx=5)
 
         
@@ -953,11 +1134,18 @@ class GameTextReader:
         self.area_scrollbar = tk.Scrollbar(self.area_outer_frame, orient='vertical', command=self.area_canvas.yview)
         self.area_scrollbar.pack(side='right', fill='y')
 
-        # Enable mouse wheel scrolling for the canvas
+        # Enable mouse wheel scrolling for the canvas only when mouse is over it
         def _on_mousewheel(event):
-            # Windows scroll direction
-            self.area_canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
-        self.area_canvas.bind_all('<MouseWheel>', _on_mousewheel)
+            if self.area_canvas.bbox('all') and self.area_canvas.winfo_height() < (self.area_canvas.bbox('all')[3] - self.area_canvas.bbox('all')[1]):
+                self.area_canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+            return "break"
+        def _bind_mousewheel(event):
+            self.area_canvas.bind_all('<MouseWheel>', _on_mousewheel)
+        def _unbind_mousewheel(event):
+            self.area_canvas.unbind_all('<MouseWheel>')
+        self.area_canvas.bind('<Enter>', _bind_mousewheel)
+        self.area_canvas.bind('<Leave>', _unbind_mousewheel)
+        # If you want to support Linux (Button-4/5), add similar binds for those events.
         
         # Create a frame inside the canvas for area frames
         self.area_frame = tk.Frame(self.area_canvas)
@@ -1030,7 +1218,7 @@ class GameTextReader:
         def on_info_close():
             # Restore hotkeys for all areas
             for area in self.areas:
-                area_frame, hotkey_button, _, _, _, _, _ = area
+                area_frame, hotkey_button, _, area_name_var, _, _, _ = area
                 if hasattr(hotkey_button, 'hotkey'):
                     self.setup_hotkey(hotkey_button, area_frame)
             # Restore stop hotkey if present
@@ -1078,13 +1266,22 @@ class GameTextReader:
         # Coder line with embedded Cursor link
         coder_frame = ttk.Frame(proginfo_frame)
         coder_frame.pack(side='left')
-        coder_label1 = ttk.Label(coder_frame, text="Coder: ChatGPT / Claude-3.5 via ", font=("Helvetica", 10))
+        coder_label1 = ttk.Label(coder_frame, text="Coder: Different AI's via ", font=("Helvetica", 10))
         coder_label1.pack(side='left')
         cursor_link = ttk.Label(coder_frame, text="Cursor", font=("Helvetica", 10, "underline"), foreground='black', cursor='hand2')
         cursor_link.pack(side='left')
         cursor_link.bind("<Button-1>", lambda e: open_url("https://www.cursor.com/"))
         cursor_link.bind("<Enter>", lambda e: cursor_link.configure(font=("Helvetica", 10, "underline")))
         cursor_link.bind("<Leave>", lambda e: cursor_link.configure(font=("Helvetica", 10)))
+
+        # Add Windsurf link
+        windsurf_label = ttk.Label(coder_frame, text=" and ", font=("Helvetica", 10))
+        windsurf_label.pack(side='left')
+        windsurf_link = ttk.Label(coder_frame, text="Windsurf", font=("Helvetica", 10, "underline"), foreground='black', cursor='hand2')
+        windsurf_link.pack(side='left')
+        windsurf_link.bind("<Button-1>", lambda e: open_url("https://windsurf.com/"))
+        windsurf_link.bind("<Enter>", lambda e: windsurf_link.configure(font=("Helvetica", 10, "underline")))
+        windsurf_link.bind("<Leave>", lambda e: windsurf_link.configure(font=("Helvetica", 10)))
 
         # Official Links (right)
         links_frame = ttk.Frame(credits_row)
@@ -1123,13 +1320,14 @@ class GameTextReader:
         # Feedback link
         feedback_frame = ttk.Frame(support_frame)
         feedback_frame.pack(fill='x', pady=(2, 0))
-        feedback_label = ttk.Label(feedback_frame, text="Bug Reports & Feedback via Google Form: ", font=("Helvetica", 10, "bold"))
+        feedback_label = ttk.Label(feedback_frame, text="Want something added? Found bugs? Let me know!: via this Google Form: ", font=("Helvetica", 10, "bold"))
         feedback_label.pack(side='left')
-        feedback_link = ttk.Label(feedback_frame, text="Forms.Gle/8YBU8atkgwjyzdM79 🐞", font=("Helvetica", 10), foreground='black', cursor='hand2')
+        feedback_link = ttk.Label(feedback_frame, text="Forms.Gle/8YBU8atkgwjyzdM79", font=("Helvetica", 10), foreground='black', cursor='hand2')
         feedback_link.pack(side='left')
         feedback_link.bind("<Button-1>", lambda e: open_url("https://forms.gle/8YBU8atkgwjyzdM79"))
         feedback_link.bind("<Enter>", lambda e: feedback_link.configure(font=("Helvetica", 10, "underline")))
         feedback_link.bind("<Leave>", lambda e: feedback_link.configure(font=("Helvetica", 10)))
+
 
         # Spacer before Tesseract warning
         ttk.Label(credits_frame, text="").pack()
@@ -1187,7 +1385,7 @@ class GameTextReader:
         scrollbar = ttk.Scrollbar(content_frame)
         scrollbar.pack(side='right', fill='y')
         
-        # Create text widget with custom styling
+        # Create text widget with custom styling - make it selectable
         text_widget = tk.Text(content_frame, 
                              wrap=tk.WORD, 
                              yscrollcommand=scrollbar.set,
@@ -1197,13 +1395,28 @@ class GameTextReader:
                              spacing1=2,  # Space between lines
                              spacing2=2,  # Space between paragraphs
                              background='#f5f5f5',  # Light gray background
-                             border=1)
+                             border=1,
+                             state='normal',  # Make it editable initially to insert text
+                             cursor='xterm',  # Show text cursor
+                             selectbackground='#0078d7',  # Blue selection color
+                             selectforeground='white')  # White text on selection
+        
+        # Add right-click context menu for copy
+        def show_context_menu(event):
+            context_menu = tk.Menu(text_widget, tearoff=0)
+            context_menu.add_command(label="Copy", command=lambda: text_widget.event_generate('<<Copy>>'))
+            context_menu.add_command(label="Select All", command=lambda: text_widget.tag_add('sel', '1.0', 'end'))
+            try:
+                context_menu.tk.call('tk_popup', context_menu, event.x_root, event.y_root)
+            finally:
+                context_menu.grab_release()
+        
+        text_widget.bind("<Button-3>", show_context_menu)
+        
         text_widget.pack(fill='both', expand=True)
         
-        # Configure scrollbar
+        # Configure scrollbar and tags
         scrollbar.config(command=text_widget.yview)
-        
-        # Create a bold font tag
         text_widget.tag_configure('bold', font=("Helvetica", 10, "bold"))
         
         # Info text with improved formatting - split into sections
@@ -1225,14 +1438,18 @@ class GameTextReader:
             ("═════════════════════\n\n", None),
 
 
-            ("AutoRead\n", 'bold'),
+            ("Auto Read\n", 'bold'),
             ("------------------------\n", None),
-("When assigned a hotkey, the program will automatically read the text in the selected area.\n", None),
-("The save button here will save the settings for the AutoRead area only.\n", None),
-("Note! This works best with applications in windowed borderless mode.\n", None),
-("This save file can be found here: C:\\Users\\<username>\\AppData\\Local\\Temp\nFilename: auto_read_settings.json\n\n", None),
-            
-            ("Add read area\n", 'bold'),
+            ("When assigned a hotkey, the program will automatically read the text in the selected area.\n", None),
+            ("The Save button here will save the settings for the AutoRead area only.\n", None),
+            ("Note! This works best with applications in windowed borderless mode.\n", None),
+            ("This save file can be found here: C:\\Users\\<username>\\AppData\\Local\\Temp\nFilename: auto_read_settings.json.\n", None),
+            ("Alternatively, you can locate this save file by clicking the 'Program Saves...' button.\n", None),
+            ("The checkbox 'Stop Read on Select' determines the behavior when scanning a new area while text is being read.\n", None),
+            ("If checked, the ongoing text will stop immediately, and the newly scanned text will be read.\n", None),
+            ("If unchecked, the newly scanned text will be added to a queue and read after the ongoing text finishes.\n\n", None),
+
+            ("Add Read Area\n", 'bold'),
             ("------------------------\n", None),
             ("Creates a new area for text capture. You can define multiple areas on screen for different text sources.\n\n", None),
             
@@ -1243,57 +1460,68 @@ class GameTextReader:
             ("Debug window\n", 'bold'),
             ("---------------------------\n", None),
             ("Shows the captured text and processed images for troubleshooting.\n\n", None),
-            
+
             ("Stop Hotkey\n", 'bold'),
             ("--------------------\n", None),
             ("Immediately stops any ongoing speech.\n\n", None),
 
             ("Ignored Word List\n", 'bold'),
             ("-------------------------\n", None),
-            ("A list of words or phrases to ignore while reading text. Example: Chocolate, Apple, Banana\n", None),
-            ("This will then be ignored in all areas.\n\n\n", None),
-            
+            ("A list of words, phrases, or sentences (separated by commas) to ignore while reading text. Example: Chocolate, Apple, Banana, I love ice cream\n", None),
+            ("These will then be ignored in all areas.\n\n", None),
+
             ("CHECKBOX OPTIONS\n", 'bold'),
             ("════════════════\n\n", None),
-            
-            ("Ignore usernames *EXPERIMENTAL* \n", 'bold'),
+
+            ("Ignore usernames *EXPERIMENTAL*\n", 'bold'),
             ("--------------------------------\n", None),
             ("This option filters out usernames from the text before reading. It looks for patterns like \"Username:\" at the start of lines.\n\n", None),
-            
+
             ("Ignore previous spoken words\n", 'bold'),
             ("-------------------------------------------------\n", None),
             ("This prevents the same text from being read multiple times. Useful for chat windows where messages might persist.\n\n", None),
-            
+
             ("Ignore gibberish *EXPERIMENTAL*\n", 'bold'),
             ("-------------------------------------------------------\n", None),
             ("Filters out text that appears to be random characters or rendered artifacts. Helps prevent reading of non-meaningful text.\n\n", None),
-            
+
             ("Pause at punctuation *EXPERIMENTAL*\n", 'bold'),
             ("------------------------------------\n", None),
             ("Adds natural pauses when encountering periods, commas, and other punctuation marks. Makes the speech sound more natural.\n\n", None),
-            
+
             ("Fullscreen mode *EXPERIMENTAL*\n", 'bold'),
             ("--------------------------------------------------------\n", None),
-            ("Feature for capturing text from fullscreen applications. May cause brief screen flicker during capture for the program to take an updated screenshot.\n\n\n", None),
+            ("Feature for capturing text from fullscreen applications. May cause brief screen flicker during capture for the program to take an updated screenshot.\n\n", None),
 
             ("TIPS AND TRICKS\n", 'bold'),
             ("═════════════\n\n", None),
-            
+
             ("• Use image processing for areas with difficult-to-read text\n\n", None),
-            
+
             ("• Create two identical areas with different hotkeys: assign one a male voice and the other a female voice.\n", None),
             ("  This lets you easily switch between male and female voices for text, ideal for game dialogue.\n\n", None),
+
             ("• Experiment with different preprocessing settings for optimal text recognition in your specific use case.\n\n", None),
-            ("• Want more Voices? add them in windows. \n", None),
-            ("  Go to Settings > Time & Language > Speech > Manage voices, then click 'Add voices' to install new ones. \n", None),
-            ("  you can also find other Narrator voices online that you can add to windows. \n", None),
+
+            ("• Want more Voices? Add them in Windows.\n", None),
+            ("  For Windows 10: Go to Settings > Time & Language > Speech > Manage voices, then click 'Add voices' to install new ones.\n", None),
+            ("  For Windows 11: Go to Settings > Accessibility > Speech > Manage voices, then click 'Add voices' to install new ones.\n", None),
+            ("  You can also find other Narrator voices online that you can add to Windows.\n", None),
         ]
         
         # Insert text with tags
         for text, tag in info_text:
             text_widget.insert('end', text, tag)
         
-        # Make text widget read-only
+        # Enable text selection and copying even when disabled
+        def enable_text_selection(event=None):
+            return 'break'
+            
+        text_widget.bind('<Key>', enable_text_selection)
+        text_widget.bind('<Control-c>', lambda e: text_widget.event_generate('<<Copy>>') or 'break')
+        text_widget.bind('<Control-a>', lambda e: (text_widget.tag_add('sel', '1.0', 'end'), 'break'))
+        
+        # Make text widget read-only but keep text selectable
         text_widget.config(state='disabled')
         
         # Add bottom frame for close button with padding
@@ -1568,7 +1796,10 @@ class GameTextReader:
                     'stop_read_on_select': self.interrupt_on_new_scan_var.get(),
                 }
                 # Optionally add more settings as needed
-                temp_path = os.path.join(tempfile.gettempdir(), 'auto_read_settings.json')
+                # Create GameReader subdirectory in Temp if it doesn't exist
+                game_reader_dir = os.path.join(tempfile.gettempdir(), 'GameReader')
+                os.makedirs(game_reader_dir, exist_ok=True)
+                temp_path = os.path.join(game_reader_dir, 'auto_read_settings.json')
                 with open(temp_path, 'w') as f:
                     json.dump(settings, f)
                 # Show status message
@@ -1607,25 +1838,32 @@ class GameTextReader:
                 # Clean up keyboard hook if it exists
                 if hasattr(hotkey_button, 'keyboard_hook'):
                     try:
-                        keyboard.unhook(hotkey_button.keyboard_hook)
+                        # Only try to unhook if the hook exists and is not None
+                        if hotkey_button.keyboard_hook:
+                            keyboard.unhook(hotkey_button.keyboard_hook)
                     except Exception as e:
-                        print(f"Error cleaning up keyboard hook: {e}")
+                        print(f"Warning: Error cleaning up keyboard hook: {e}")
+                    finally:
+                        # Always set to None to prevent future errors
+                        hotkey_button.keyboard_hook = None
+
                 # Clean up mouse hook if it exists
                 if hasattr(hotkey_button, 'mouse_hook'):
                     try:
-                        mouse.unhook(hotkey_button.mouse_hook)
+                        # Only try to unhook if the hook exists and is not None
+                        if hotkey_button.mouse_hook:
+                            mouse.unhook(hotkey_button.mouse_hook)
                     except Exception as e:
-                        print(f"Error cleaning up mouse hook: {e}")
-                break
-
-        # Clean up image if it exists
-        if area_name in self.latest_images:
-            try:
-                self.latest_images[area_name].close()
-                del self.latest_images[area_name]
-            except:
-                pass
-            
+                        print(f"Warning: Error cleaning up mouse hook: {e}")
+                    finally:
+                        # Always set to None to prevent future errors
+                        hotkey_button.mouse_hook = None
+                try:
+                    self.latest_images[area_name].close()
+                    del self.latest_images[area_name]
+                except:
+                    pass
+        
         # Remove the area frame from the UI
         area_frame.destroy()
         # Remove the area from the list of areas
@@ -1760,13 +1998,6 @@ class GameTextReader:
                 else:
                     select_area_window.destroy()
 
-                # --- Re-enable hotkeys after area selection completes ---
-                try:
-                    self.restore_all_hotkeys()
-                except Exception as e:
-                    print(f"Error restoring hotkeys after area selection: {e}")
-                self.hotkeys_disabled_for_selection = False
-
                 # Only prompt for name if it's the default or not set, and not Auto Read
                 current_name = area_name_var.get()
                 if not is_auto_read:
@@ -1787,6 +2018,14 @@ class GameTextReader:
                     # Always keep button label as 'Select Area' for Auto Read
                     if set_area_button is not None:
                         set_area_button.config(text="Select Area")
+
+                # --- Re-enable hotkeys after area selection and naming completes ---
+                try:
+                    self.restore_all_hotkeys()
+                except Exception as e:
+                    print(f"Error restoring hotkeys after area selection: {e}")
+                self.hotkeys_disabled_for_selection = False
+                print("Hotkeys re-enabled after area selection and naming")
 
         def on_escape(event):
             nonlocal selection_cancelled
@@ -1863,12 +2102,37 @@ class GameTextReader:
     def disable_all_hotkeys(self):
         """Disable all hotkeys for keyboard and mouse."""
         try:
-            import keyboard
-            import mouse
+            # Unhook all keyboard and mouse hooks
             keyboard.unhook_all()
             mouse.unhook_all()
+            
+            # Only clear lists if they exist and are not empty
+            if hasattr(self, 'keyboard_hooks') and self.keyboard_hooks:
+                self.keyboard_hooks.clear()
+            if hasattr(self, 'mouse_hooks') and self.mouse_hooks:
+                self.mouse_hooks.clear()
+            if hasattr(self, 'hotkeys') and self.hotkeys:
+                self.hotkeys.clear()
+            
+            # Reset hotkey setting state
+            self.setting_hotkey = False
+            
         except Exception as e:
-            print(f"Error disabling all hotkeys: {e}")
+            print(f"Warning: Error during hotkey cleanup: {e}")
+            print(f"Current state - keyboard_hooks: {len(getattr(self, 'keyboard_hooks', []))}")
+            print(f"Current state - mouse_hooks: {len(getattr(self, 'mouse_hooks', []))}")
+            print(f"Current state - hotkeys: {len(getattr(self, 'hotkeys', []))}")
+            # Don't fail the entire operation if cleanup fails
+
+    def unhook_mouse(self):
+        try:
+            # Only attempt to unhook and clear if mouse_hooks exists and has items
+            if hasattr(self, 'mouse_hooks') and self.mouse_hooks:
+                mouse.unhook_all()
+                self.mouse_hooks.clear()
+        except Exception as e:
+            print(f"Warning: Error during mouse hook cleanup: {e}")
+            print(f"Mouse hooks list state: {len(getattr(self, 'mouse_hooks', []))}")
 
     def restore_all_hotkeys(self):
         """Restore all area and stop hotkeys after area selection is finished/cancelled."""
@@ -1888,148 +2152,186 @@ class GameTextReader:
                 print(f"Error re-registering stop hotkey: {e}")
 
     def set_hotkey(self, button, area_frame):
-        # --- Disable all hotkeys before starting hotkey assignment ---
+        # Clean up temporary hooks and disable all hotkeys
         try:
-            keyboard.unhook_all()
-            mouse.unhook_all()
+            if hasattr(button, 'keyboard_hook_temp'):
+                print(f"Debug: Removing existing keyboard hook for button {button}")
+                delattr(button, 'keyboard_hook_temp')
+            
+            if hasattr(button, 'mouse_hook_temp'):
+                print(f"Debug: Removing existing mouse hook for button {button}")
+                delattr(button, 'mouse_hook_temp')
+            
+            print("Debug: Disabling all hotkeys before setting new one")
+            self.disable_all_hotkeys()
         except Exception as e:
-            print(f"Error disabling hotkeys for hotkey assignment: {e}")
-        self.hotkeys_disabled_for_hotkey = True
+            print(f"Warning: Error cleaning up temporary hooks: {e}")
+
+        print("Debug: Starting hotkey assignment process")
         self._hotkey_assignment_cancelled = False  # Guard flag to block late events
+        self.setting_hotkey = True
+        print(f"Debug: Setting hotkey state to True for button: {button}")
+        print(f"Debug: Current button text: {button['text']}")
 
         def finish_hotkey_assignment():
             # --- Re-enable all hotkeys after hotkey assignment is finished/cancelled ---
             try:
                 self.restore_all_hotkeys()
             except Exception as e:
-                print(f"Error restoring hotkeys after hotkey assignment: {e}")
-            self.hotkeys_disabled_for_hotkey = False
+                print(f"Warning: Error restoring hotkeys: {e}")
 
         def on_key_press(event):
+            print(f"Debug: Key press event received: {event.name}")
             if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                print("Debug: Hotkey assignment cancelled or not in setting state - ignoring event")
                 return
+            
             key_name = event.name
             if event.scan_code in self.numpad_scan_codes:
                 key_name = f"num_{self.numpad_scan_codes[event.scan_code]}"
-            # Disallow Esc key as a hotkey
-            if key_name.lower() in ("esc", "escape"):
+            
+            # Disallow duplicate hotkeys
+            duplicate_found = False
+            for area in self.areas:
+                if area[1] is not button and hasattr(area[1], 'hotkey') and area[1].hotkey == key_name:
+                    duplicate_found = True
+                    break
+
+            if duplicate_found:
+                print("Debug: Duplicate hotkey detected - cleaning up and showing warning")
                 # Unhook temp hooks and set flags BEFORE showing the warning
                 self.setting_hotkey = False
                 self._hotkey_assignment_cancelled = True  # Block all further events
                 if hasattr(button, 'keyboard_hook_temp'):
+                    print("Debug: Unhooking keyboard temp hook")
                     keyboard.unhook(button.keyboard_hook_temp)
                     delattr(button, 'keyboard_hook_temp')
                 if hasattr(button, 'mouse_hook_temp'):
+                    print("Debug: Unhooking mouse temp hook")
                     mouse.unhook(button.mouse_hook_temp)
                     delattr(button, 'mouse_hook_temp')
                 finish_hotkey_assignment()
+                # Now show the warning dialog (no hooks are active)
                 if hasattr(button, 'hotkey'):
                     display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
                     button.config(text=f"Set Hotkey: [ {display_name} ]")
                 else:
                     button.config(text="Set Hotkey")
-                # Show the same custom dialog as for mouse button hotkey errors
-                dialog = tk.Toplevel(self.root)
-                dialog.title("Invalid Hotkey")
-                dialog.geometry("300x120")
-                dialog.transient(self.root)
-                dialog.grab_set()
-                # Center the dialog on the screen
-                dialog.update_idletasks()
-                x = self.root.winfo_rootx() + self.root.winfo_width()//2 - 150
-                y = self.root.winfo_rooty() + self.root.winfo_height()//2 - 60
-                dialog.geometry(f"300x120+{x}+{y}")
-                # Add message
-                msg = tk.Label(dialog, text="Escape (Esc) cannot be used as a hotkey.\nPlease set a different hotkey.", pady=20)
-                msg.pack()
-                # Add OK button
-                ok_btn = tk.Button(dialog, text="OK", command=dialog.destroy, width=10)
-                ok_btn.pack(pady=10)
-                ok_btn.focus_set()
-                dialog.bind("<Return>", lambda e: dialog.destroy())
-                dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
-                return
-            # Remove existing hook for this button only
-            if hasattr(button, 'keyboard_hook'):
-                try:
-                    keyboard.unhook(button.keyboard_hook)
-                    delattr(button, 'keyboard_hook')
-                except:
-                    pass
-            # Check for hotkey conflicts across ALL areas, including Auto Read
-            for area_frame2, hotkey_button2, _, area_name_var2, _, _, _ in self.areas:
-                # Do not allow duplicate hotkeys for any area (including Auto Read)
-                if hotkey_button2 is not button and hasattr(hotkey_button2, 'hotkey') and hotkey_button2.hotkey == key_name:
-                    # Unhook temp hooks and set flags BEFORE showing the warning
-                    self.setting_hotkey = False
-                    self._hotkey_assignment_cancelled = True  # Block all further events
-                    if hasattr(button, 'keyboard_hook_temp'):
-                        keyboard.unhook(button.keyboard_hook_temp)
-                        delattr(button, 'keyboard_hook_temp')
-                    if hasattr(button, 'mouse_hook_temp'):
-                        mouse.unhook(button.mouse_hook_temp)
-                        delattr(button, 'mouse_hook_temp')
-                    finish_hotkey_assignment()
-                    # Now show the warning dialog (no hooks are active)
-                    if hasattr(button, 'hotkey'):
-                        display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
-                        button.config(text=f"Set Hotkey: [ {display_name} ]")
-                    else:
-                        button.config(text="Set Hotkey")
-                    show_thinkr_warning(self, area_name_var2.get())
-                    return
+                # Find the area name that's using this hotkey
+                for area in self.areas:
+                    if area[1] is not button and hasattr(area[1], 'hotkey') and area[1].hotkey == key_name:
+                        area_name = area[3].get() if hasattr(area[3], 'get') else "Unknown Area"
+                        break
+                show_thinkr_warning(self, area_name)
+                print("Debug: Warning shown for duplicate hotkey")
+                return  # Keep the return but without False since we want to show the warning
+                
+            # Only proceed with setting hotkey if no duplicate was found
+            print(f"Debug: Setting hotkey to: {key_name}")
             button.hotkey = key_name
             display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
             button.config(text=f"Set Hotkey: [ {display_name} ]")
+            print(f"Debug: Setting up hotkey for button: {button}")
             self.setup_hotkey(button, area_frame)
             self.setting_hotkey = False
+            print("Debug: Hotkey state set to False")
             # Unhook both temp hooks if they exist
             if hasattr(button, 'keyboard_hook_temp'):
+                print("Debug: Unhooking temporary keyboard hook")
                 keyboard.unhook(button.keyboard_hook_temp)
                 delattr(button, 'keyboard_hook_temp')
             if hasattr(button, 'mouse_hook_temp'):
+                print("Debug: Unhooking temporary mouse hook")
                 mouse.unhook(button.mouse_hook_temp)
                 delattr(button, 'mouse_hook_temp')
+            print("Debug: Calling finish_hotkey_assignment")
             finish_hotkey_assignment()
             # Guard: prevent any further hotkey assignment callbacks
             self.setting_hotkey = False
+            print("Debug: Hotkey assignment completed")
             return
+                
+            # Only proceed with setting hotkey if no duplicate was found
+            print(f"Debug: Setting hotkey to: {key_name}")
+            button.hotkey = key_name
+            display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
+            button.config(text=f"Set Hotkey: [ {display_name} ]")
+            print(f"Debug: Setting up hotkey for button: {button}")
+            self.setup_hotkey(button, area_frame)
+            self.setting_hotkey = False
+            print("Debug: Hotkey state set to False")
+            # Unhook both temp hooks if they exist
+            if hasattr(button, 'keyboard_hook_temp'):
+                print("Debug: Unhooking temporary keyboard hook")
+                keyboard.unhook(button.keyboard_hook_temp)
+                delattr(button, 'keyboard_hook_temp')
+            if hasattr(button, 'mouse_hook_temp'):
+                print("Debug: Unhooking temporary mouse hook")
+                mouse.unhook(button.mouse_hook_temp)
+                delattr(button, 'mouse_hook_temp')
+            print("Debug: Calling finish_hotkey_assignment")
+            finish_hotkey_assignment()
+            # Guard: prevent any further hotkey assignment callbacks
+            self.setting_hotkey = False
+            print("Debug: Hotkey assignment completed")
+            return
+            print(f"Debug: Setting hotkey to: {key_name}")
+            button.hotkey = key_name
+            display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
+            button.config(text=f"Set Hotkey: [ {display_name} ]")
+            print(f"Debug: Setting up hotkey for button: {button}")
+            self.setup_hotkey(button, area_frame)
+            self.setting_hotkey = False
+            print("Debug: Hotkey state set to False")
+            # Unhook both temp hooks if they exist
+            if hasattr(button, 'keyboard_hook_temp'):
+                print("Debug: Unhooking temporary keyboard hook")
+                keyboard.unhook(button.keyboard_hook_temp)
+                delattr(button, 'keyboard_hook_temp')
+            if hasattr(button, 'mouse_hook_temp'):
+                print("Debug: Unhooking temporary mouse hook")
+                mouse.unhook(button.mouse_hook_temp)
+                delattr(button, 'mouse_hook_temp')
+            print("Debug: Calling finish_hotkey_assignment")
+            finish_hotkey_assignment()
+            # Guard: prevent any further hotkey assignment callbacks
+            self.setting_hotkey = False
+            print("Debug: Hotkey assignment completed")
+            return
+
         def on_mouse_click(event):
-            if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+            # Only handle button down events
+            if not isinstance(event, mouse.ButtonEvent) or event.event_type != mouse.DOWN:
                 return
-            if not hasattr(event, 'event_type') or event.event_type != mouse.DOWN:
+            
+            # List of all potential names for left and right mouse buttons
+            LEFT_MOUSE_BUTTONS = [
+                '1', 'left', 'primary', 'select', 'action', 'button1', 'mouse1'
+            ]
+            RIGHT_MOUSE_BUTTONS = [
+                '2', 'right', 'secondary', 'context', 'alternate', 'button2', 'mouse2'
+            ]
+            
+            # Get the button name from the event
+            button_name = str(event.button).lower()
+            
+            # Prevent left and right mouse buttons
+            if button_name in LEFT_MOUSE_BUTTONS or button_name in RIGHT_MOUSE_BUTTONS:
+                print(f"Debug: Mouse button {button_name} detected - cannot use as hotkey")
+                if not hasattr(self, '_mouse_button_error_shown'):
+                    messagebox.showerror("Error", "Left and right mouse buttons cannot be used as hotkeys.")
+                    self._mouse_button_error_shown = True
                 return
-            if getattr(event, 'button', None) in [1, 2]:
-                messagebox.showerror("Error", "Left and right mouse buttons cannot be used as hotkeys.")
-                if hasattr(button, 'hotkey'):
-                    display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
-                    button.config(text=f"Set Hotkey: [ {display_name} ]")
-                else:
-                    button.config(text="Set Hotkey")
-                # Unhook temp hooks and set flags BEFORE showing the warning
-                self.setting_hotkey = False
-                self._hotkey_assignment_cancelled = True  # Block all further events
-                if hasattr(button, 'keyboard_hook_temp'):
-                    keyboard.unhook(button.keyboard_hook_temp)
-                    delattr(button, 'keyboard_hook_temp')
-                if hasattr(button, 'mouse_hook_temp'):
-                    mouse.unhook(button.mouse_hook_temp)
-                    delattr(button, 'mouse_hook_temp')
-                finish_hotkey_assignment()
-                if hasattr(button, 'hotkey'):
-                    display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
-                    button.config(text=f"Set Hotkey: [ {display_name} ]")
-                else:
-                    button.config(text="Set Hotkey")
-                messagebox.showerror("Error", "Left and right mouse buttons cannot be used as hotkeys.")
-                return
+            
+            # Create a mock keyboard event
+            mock_event = type('MockEvent', (), {
+                'name': f'button{event.button}',  # Format: button3, button4, etc.
+                'scan_code': None
+            })
+            on_key_press(mock_event)
+            
+            # Check for hotkey conflicts
             key_name = f'button{event.button}'
-            if hasattr(button, 'mouse_hook'):
-                try:
-                    mouse.unhook(button.mouse_hook)
-                    delattr(button, 'mouse_hook')
-                except:
-                    pass
             for area_frame2, hotkey_button2, _, area_name_var2, _, _, _ in self.areas:
                 if hotkey_button2 is not button and hasattr(hotkey_button2, 'hotkey') and hotkey_button2.hotkey == key_name:
                     show_thinkr_warning(self, area_name_var2.get())
@@ -2038,18 +2340,27 @@ class GameTextReader:
                         button.config(text=f"Set Hotkey: [ {display_name} ]")
                     else:
                         button.config(text="Set Hotkey")
-                    finish_hotkey_assignment()
                     return
+            
+            # Set the new hotkey
             button.hotkey = key_name
-            button.config(text=f"Set Hotkey: [ {key_name} ]")
+            display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
+            button.config(text=f"Set Hotkey: [ {display_name} ]")
+            
+            # Setup the hotkey
             self.setup_hotkey(button, area_frame)
-            # Unhook both temp hooks if they exist
+            
+            # Clean up temporary hooks
             if hasattr(button, 'keyboard_hook_temp'):
                 keyboard.unhook(button.keyboard_hook_temp)
                 delattr(button, 'keyboard_hook_temp')
             if hasattr(button, 'mouse_hook_temp'):
                 mouse.unhook(button.mouse_hook_temp)
                 delattr(button, 'mouse_hook_temp')
+            
+            # Finish hotkey assignment
+            self.setting_hotkey = False
+            self._hotkey_assignment_cancelled = False
             finish_hotkey_assignment()
             return
         # Clean up previous hooks
@@ -2069,12 +2380,44 @@ class GameTextReader:
         self.setting_hotkey = True  # Enable hotkey assignment mode before installing hooks
         button.keyboard_hook_temp = keyboard.on_press(on_key_press)
         button.mouse_hook_temp = mouse.hook(on_mouse_click)
+        
+        # Set 3-second timeout for hotkey setting
+        def unhook_mouse():
+            try:
+                # Only try to unhook if the hook exists and is not None
+                if hasattr(button, 'mouse_hook_temp') and button.mouse_hook_temp:
+                    try:
+                        mouse.unhook(button.mouse_hook_temp)
+                    except Exception as e:
+                        print(f"Warning: Error unhooking mouse: {e}")
+                    finally:
+                        delattr(button, 'mouse_hook_temp')
+                
+                if hasattr(button, 'keyboard_hook_temp') and button.keyboard_hook_temp:
+                    try:
+                        keyboard.unhook(button.keyboard_hook_temp)
+                    except Exception as e:
+                        print(f"Warning: Error unhooking keyboard: {e}")
+                    finally:
+                        delattr(button, 'keyboard_hook_temp')
+                
+                self.setting_hotkey = False
+                self._hotkey_assignment_cancelled = True
+                if not hasattr(button, 'hotkey'):
+                    button.config(text="Set Hotkey")
+            except Exception as e:
+                print(f"Warning: Error during hook cleanup: {e}")
+                button.config(text="Set Hotkey")
+        self.root.after(3000, unhook_mouse)
 
     def save_layout(self):
         # Check if there are no areas
         if not self.areas:
             messagebox.showerror("Error", "There is nothing to save.")
             return
+            
+        # Reset unsaved changes flag
+        self._has_unsaved_changes = False
 
         # Check if all areas have coordinates set, but ignore Auto Read
         for area_frame, _, _, area_name_var, _, _, _ in self.areas:
@@ -2091,6 +2434,8 @@ class GameTextReader:
             "ignore_previous": self.ignore_previous_var.get(),
             "ignore_gibberish": self.ignore_gibberish_var.get(),
             "pause_at_punctuation": self.pause_at_punctuation_var.get(),
+            "better_unit_detection": self.better_unit_detection_var.get(),
+            "read_game_units": self.read_game_units_var.get(),
             "fullscreen_mode": self.fullscreen_mode_var.get(),
             "stop_hotkey": self.stop_hotkey,
             "volume": self.volume.get(),
@@ -2146,12 +2491,234 @@ class GameTextReader:
             messagebox.showerror("Error", f"Failed to save layout: {str(e)}")
             print(f"Error saving layout: {e}")
 
-    def load_layout(self):
-        file_path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
+    def load_game_units(self):
+        """Load game units from JSON file in GameReader directory."""
+        import tempfile, os, json, re
+        temp_path = os.path.join(tempfile.gettempdir(), 'GameReader')
+        os.makedirs(temp_path, exist_ok=True)
+        
+        file_path = os.path.join(temp_path, 'gamer_units.json')
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    # Remove comments from JSON file before parsing
+                    content = f.read()
+                    # Remove single-line comments (// ...)
+                    content = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
+                    # Remove multi-line comments (/* ... */)
+                    content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+                    # Parse the cleaned JSON
+                    return json.loads(content)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                print(f"Warning: Error reading game units file: {e}, using default units")
+        
+        # Create default game units if file doesn't exist or is invalid
+        default_units = {
+            'xp': 'Experience Points',
+            'hp': 'Health Points',
+            'mp': 'Mana Points',
+            'gp': 'Gold Pieces',
+            'pp': 'Platinum Pieces',
+            'sp': 'Skill Points',
+            'ep': 'Energy Points',
+            'ap': 'Action Points',
+            'bp': 'Battle Points',
+            'lp': 'Loyalty Points',
+            'cp': 'Challenge Points',
+            'vp': 'Victory Points',
+            'rp': 'Reputation Points',
+            'tp': 'Talent Points',
+            'ar': 'Armor Rating',
+            'dmg': 'Damage',
+            'dps': 'Damage Per Second',
+            'def': 'Defense',
+            'mat': 'Materials',
+            'exp': 'Exploration Points',
+            '§': 'Simoliance',
+            'v-bucks': 'Virtual Bucks',
+            'r$': 'Robux',
+            'nmt': 'Nook Miles Tickets',
+            'be': 'Blue Essence',
+            'radianite': 'Radianite Points',
+            'ow coins': 'Overwatch Coins',
+            '₽': 'PokeDollars',
+            '€$': 'Eurodollars',
+            'z': 'Zenny',
+            'l': 'Lunas',
+            'e': 'Eve',
+            'i': 'Isk',
+            'j': 'Jewel',
+            'sc': 'Star Coins',
+            'o2': 'Oxygen',
+            'pu': 'Power Units',
+            'mc': 'Mana Crystals',
+            'es': 'Essence',
+            'sh': 'Shards',
+            'st': 'Stars',
+            'mu': 'Munny',
+            'b': 'Bolts',
+            'r': 'Rings',
+            'ca': 'Caps',
+            'rns': 'Runes',
+            'sl': 'Souls',
+            'fav': 'Favor',
+            'am': 'Amber',
+            'cc': 'Crystal Cores',
+            'fg': 'Fragments'
+        }
+        
+        # Save default units to file
+        with open(file_path, 'w', encoding='utf-8') as f:
+            header = '''//  Game Units Configuration
+//  Format: "short_name": "Full Name"
+//  Example: "xp" will be read as "Experience Points"
+//  Enable "Read gamer units" in the main window to use this feature
+
+'''
+            f.write(header)
+            json.dump(default_units, f, indent=4, ensure_ascii=False)
+        
+        return default_units
+
+    def save_game_units(self):
+        """Save game units to JSON file in GameReader directory."""
+        import tempfile, os, json
+        
+        temp_path = os.path.join(tempfile.gettempdir(), 'GameReader')
+        os.makedirs(temp_path, exist_ok=True)
+        
+        file_path = os.path.join(temp_path, 'game_units.json')
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                header = '''//  Game Units Configuration
+//  Format: "short_name": "Full Name"
+//  Example: "xp" will be read as "Experience Points"
+//  Enable "Read gamer units" in the main window to use this feature
+
+'''
+                f.write(header)
+                json.dump(self.game_units, f, indent=4, ensure_ascii=False)
+            print(f"Game units saved to: {file_path}")
+            
+            # Show feedback in status label
+            if hasattr(self, '_feedback_timer') and self._feedback_timer:
+                self.root.after_cancel(self._feedback_timer)
+            
+            # Show load success message
+            self.status_label.config(text="Game units saved successfully!")
+            self._feedback_timer = self.root.after(3000, lambda: self.status_label.config(text=""))
+            
+            return True
+        except Exception as e:
+            print(f"Error saving game units: {e}")
+            return False
+
+    def open_game_reader_folder(self):
+        """Open the GameReader folder in Windows Explorer."""
+        import os
+        import subprocess
+        
+        # Get the current username
+        username = os.getlogin()
+        # Construct the path to GameReader folder
+        folder_path = os.path.join(os.getenv('LOCALAPPDATA'), 'Temp', 'GameReader')
+        
+        # Create folder if it doesn't exist
+        os.makedirs(folder_path, exist_ok=True)
+        
+        # Open the folder in Windows Explorer
+        try:
+            subprocess.Popen(f'explorer "{folder_path}"')
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open folder: {str(e)}")
+
+    def normalize_text(self, text):
+        """Normalize text by removing punctuation and making it lowercase."""
+        import string
+        # Remove punctuation and make lowercase
+        text = text.lower()
+        text = text.translate(str.maketrans('', '', string.punctuation))
+        # Remove extra whitespace
+        text = ' '.join(text.split())
+        return text
+
+    def on_drop(self, event):
+        """Handle file drop event"""
+        try:
+            # Get the file path from the drop event
+            # On Windows, the path is wrapped in {}
+            file_path = event.data.strip('{}')
+            
+            # Clean up the path (remove quotes if present)
+            file_path = file_path.strip('\"\'')
+            
+            # Normalize the path (convert forward slashes to backslashes on Windows)
+            file_path = os.path.normpath(file_path)
+            
+            # Check if the file exists and is a JSON file
+            if not os.path.isfile(file_path) or not file_path.lower().endswith('.json'):
+                messagebox.showerror("Error", "Please drop a valid JSON layout file")
+                return
+            
+            # Check if we have a file already loaded
+            if self.layout_file.get():
+                # If it's the same file, just return
+                if os.path.normpath(self.layout_file.get()) == file_path:
+                    return
+                    
+                # If there are unsaved changes, show warning
+                if self._has_unsaved_changes:
+                    response = messagebox.askyesnocancel(
+                        "Unsaved Changes",
+                        f"You have unsaved changes in the current layout.\n\n"
+                        f"Current: {os.path.basename(self.layout_file.get())}\n"
+                        f"New: {os.path.basename(file_path)}\n\n"
+                        "Do you want to save changes before loading the new layout?\n"
+                        "(Yes = Save and load, No = Discard changes and load, Cancel = Do nothing)"
+                    )
+                    if response is None:  # Cancel
+                        return
+                    elif response:  # Yes - Save and load
+                        self.save_layout()
+                else:
+                    # No unsaved changes, just confirm loading new file
+                    if not messagebox.askyesno(
+                        "Load New Layout",
+                        f"Load new layout file?\n\n"
+                        f"Current: {os.path.basename(self.layout_file.get())}\n"
+                        f"New: {os.path.basename(file_path)}"
+                    ):
+                        return  # User chose not to load the new file
+            
+            # Load the new layout
+            self._load_layout_file(file_path)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error handling dropped file: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def load_layout(self, file_path=None):
+        """Show file dialog to load a layout file"""
+        if not file_path:
+            file_path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
+            if not file_path:  # User cancelled
+                return
+        
+        self._load_layout_file(file_path)
+
+    def _set_unsaved_changes(self):
+        """Mark that there are unsaved changes"""
+        self._has_unsaved_changes = True
+        
+    def _load_layout_file(self, file_path):
+        """Internal method to load a layout file"""
         if file_path:
             try:
                 # Store the file path before loading
                 self.layout_file.set(file_path)
+                # Reset unsaved changes when loading a new file
+                self._has_unsaved_changes = False
                 
                 with open(file_path, 'r') as f:
                     layout = json.load(f)
@@ -2189,6 +2756,8 @@ class GameTextReader:
                 self.ignore_previous_var.set(layout.get("ignore_previous", False))
                 self.ignore_gibberish_var.set(layout.get("ignore_gibberish", False))
                 self.pause_at_punctuation_var.set(layout.get("pause_at_punctuation", False))
+                self.better_unit_detection_var.set(layout.get("better_unit_detection", False))
+                self.read_game_units_var.set(layout.get("read_game_units", False))
                 self.fullscreen_mode_var.set(layout.get("fullscreen_mode", False))
                 
                 # Load volume setting
@@ -2321,33 +2890,39 @@ class GameTextReader:
 
     def setup_hotkey(self, button, area_frame):
         # Add this check at the start of setup_hotkey
+        # Check if this is a mouse button hotkey
         if hasattr(button, 'hotkey') and button.hotkey.startswith('button'):
             # Check for both number format and left/right text format
             button_id = button.hotkey.replace('button', '')
             if button_id in ['1', '2', 'left', 'right']:  # Check for both formats
-                print("Prevented left/right mouse button from being set as hotkey")
-                
-                # Create custom dialog
-                dialog = tk.Toplevel(self.root)
-                dialog.title("Invalid Hotkey")
-                dialog.geometry("300x120")
-                dialog.transient(self.root)  # Make dialog modal
-                dialog.grab_set()  # Make dialog modal
-                
-                # Center the dialog on the screen
-                dialog.geometry("+%d+%d" % (
-                    self.root.winfo_rootx() + self.root.winfo_width()/2 - 150,
-                    self.root.winfo_rooty() + self.root.winfo_height()/2 - 60))
-                
-                # Add message
-                message = tk.Label(dialog, 
-                    text=f"Mouse button {button_id} cannot be used as a hotkey.\nPlease set a different hotkey.",
-                    pady=20)
-                message.pack()
-                
-                # Add OK button
-                ok_button = tk.Button(dialog, text="OK", command=dialog.destroy, width=10)
-                ok_button.pack(pady=10)
+                # Only show error once per session
+                if not hasattr(self, '_mouse_button_error_shown'):
+                    print("Prevented left/right mouse button from being set as hotkey")
+                    
+                    # Create custom dialog
+                    dialog = tk.Toplevel(self.root)
+                    dialog.title("Invalid Hotkey")
+                    dialog.geometry("300x120")
+                    dialog.transient(self.root)  # Make dialog modal
+                    dialog.grab_set()  # Make dialog modal
+                    
+                    # Center the dialog on the screen
+                    dialog.geometry("+%d+%d" % (
+                        self.root.winfo_rootx() + self.root.winfo_width()/2 - 150,
+                        self.root.winfo_rooty() + self.root.winfo_height()/2 - 60))
+                    
+                    # Add message
+                    message = tk.Label(dialog, 
+                        text=f"Mouse button {button_id} cannot be used as a hotkey.\nPlease set a different hotkey.",
+                        pady=20)
+                    message.pack()
+                    
+                    # Add OK button
+                    ok_button = tk.Button(dialog, text="OK", command=dialog.destroy, width=10)
+                    ok_button.pack(pady=10)
+                    
+                    # Set flag to prevent showing error again
+                    self._mouse_button_error_shown = True
                 
                 return False
         
@@ -2523,6 +3098,115 @@ class GameTextReader:
             # Use original image for OCR
             text = pytesseract.image_to_string(screenshot)
 
+        # --- Better measurement unit detection logic ---
+        import re
+        if hasattr(self, 'better_unit_detection_var') and self.better_unit_detection_var.get():
+            unit_map = {
+                'l': 'Liters',
+                'm': 'Meters',
+                'in': 'Inches',
+                'ml': 'Milliliters',
+                'gal': 'Gallons',
+                'g': 'Grams',
+                'lb': 'Pounds',
+                'ib': 'Pounds',  # Treat 'ib' as 'Pounds' due to OCR confusion
+                'c': 'Celsius',
+                'f': 'Fahrenheit',
+                # Money units
+                'kr': 'Crowns',
+                'eur': 'Euros',
+                'usd': 'US Dollars',
+                'sek': 'Swedish Crowns',
+                'nok': 'Norwegian Crowns',
+                'dkk': 'Danish Crowns',
+                '£': 'Pounds Sterling',
+            }
+            pattern = re.compile(r'(?<!\w)(\d+(?:\.\d+)?)(\s*)(l|m|in|ml|gal|g|lb|ib|c|f|kr|eur|usd|sek|nok|dkk|£)(?!\w)', re.IGNORECASE)
+            def repl(match):
+                value = match.group(1)
+                space = match.group(2)
+                unit = match.group(3).lower()
+                if unit in ['lb', 'ib']:
+                    return f"{value}{space}Pounds"
+                if unit == '£':
+                    return f"{value}{space}Pounds Sterling"
+                return f"{value}{space}{unit_map.get(unit, unit)}"
+            text = pattern.sub(repl, text)
+
+        # --- Read game units logic ---
+        if hasattr(self, 'read_game_units_var') and self.read_game_units_var.get():
+            game_unit_map = self.game_units
+            
+            # Add default mappings for common game units
+            default_mappings = {
+                'xp': 'Experience Points',
+                'hp': 'Health Points',
+                'mp': 'Mana Points',
+                'gp': 'Gold Pieces',
+                'pp': 'Platinum Pieces',
+                'sp': 'Skill Points',
+                'ep': 'Energy Points',
+                'ap': 'Action Points',
+                'bp': 'Battle Points',
+                'lp': 'Loyalty Points',
+                'cp': 'Challenge Points',
+                'vp': 'Victory Points',
+                'rp': 'Reputation Points',
+                'tp': 'Talent Points',
+                'ar': 'Armor Rating',
+                'dmg': 'Damage',
+                'dps': 'Damage Per Second',
+                'def': 'Defense',
+                'mat': 'Materials',
+                'exp': 'Exploration Points',
+                '§': 'Simoliance',
+                'v-bucks': 'Virtual Bucks',
+                'r$': 'Robux',
+                'nmt': 'Nook Miles Tickets',
+                'be': 'Blue Essence',
+                'radianite': 'Radianite Points',
+                'ow coins': 'Overwatch Coins',
+                '₽': 'PokeDollars',
+                '€$': 'Eurodollars',
+                'z': 'Zenny',
+                'l': 'Lunas',
+                'e': 'Eve',
+                'i': 'Isk',
+                'j': 'Jewel',
+                'sc': 'Star Coins',
+                'o2': 'Oxygen',
+                'pu': 'Power Units',
+                'mc': 'Mana Crystals',
+                'es': 'Essence',
+                'sh': 'Shards',
+                'st': 'Stars',
+                'mu': 'Munny',
+                'b': 'Bolts',
+                'r': 'Rings',
+                'ca': 'Caps',
+                'rns': 'Runes',
+                'sl': 'Souls',
+                'fav': 'Favor',
+                'am': 'Amber',
+                'cc': 'Crystal Cores',
+                'fg': 'Fragments'
+            }
+            
+            # Update game units with default mappings if they don't exist
+            for key, value in default_mappings.items():
+                if key not in game_unit_map:
+                    game_unit_map[key] = value
+            # Sort by length descending to match longer units first (e.g., 'gp' before 'g')
+            sorted_units = sorted(game_unit_map.keys(), key=len, reverse=True)
+            # Build regex pattern for all units (word boundaries, case-insensitive)
+            pattern = re.compile(r'(?<!\w)(\d+(?:\.\d+)?)(\s*)(' + '|'.join(map(re.escape, sorted_units)) + r')(?!\w)', re.IGNORECASE)
+            def game_repl(match):
+                value = match.group(1)
+                space = match.group(2)
+                unit = match.group(3).lower()
+                return f"{value}{space}{game_unit_map.get(unit, unit)}"
+            text = pattern.sub(game_repl, text)
+
         print(f"Processing Area with name '{area_name}' Output Text: \n {text}\n--------------------------")
 
         # Handle text history if ignore previous is enabled
@@ -2537,10 +3221,10 @@ class GameTextReader:
         lines = text.split('\n')
         filtered_lines = []
         
+        import re  # Move import to here, outside the loop
         for line in lines:
             if not line.strip():  # Skip empty lines
                 continue
-                
             words = line.split()
             if words:
                 # Filter out usernames if enabled
@@ -2555,12 +3239,57 @@ class GameTextReader:
                         else:
                             filtered_words.append(words[i])
                         i += 1
-                    
                     line = ' '.join(filtered_words)
-                
-                # Apply bad word filtering while preserving order
-                bad_words = [word.strip().lower() for word in self.bad_word_list.get().split(',')]
-                filtered_words = [word for word in line.split() if word.lower() not in bad_words]
+
+                ignore_items = [item.strip().lower() for item in self.bad_word_list.get().split(',') if item.strip()]
+
+                def normalize_text(text):
+                    # Remove punctuation, normalize spaces, and make lowercase
+                    text = re.sub(r'[\W_]+', ' ', text)  # Replace all non-word chars with space
+                    text = re.sub(r'\s+', ' ', text)     # Collapse multiple spaces
+                    return text.strip().lower()
+
+                def is_ignored(text, ignore_items, normalized_line=None):
+                    """
+                    Returns True if the text matches any ignored word or phrase (case-insensitive, ignores punctuation and extra spaces).
+                    - For single words: matches if the word matches (case-insensitive)
+                    - For phrases: matches if the phrase appears exactly (case-insensitive, ignores punctuation)
+                    """
+                    text_norm = normalize_text(text)
+                    for item in ignore_items:
+                        if ' ' in item:
+                            # Phrase: match as exact phrase anywhere in the normalized line
+                            if normalized_line and normalize_text(item) in normalized_line:
+                                return True
+                        else:
+                            # Single word: match as a word (not substring)
+                            if text_norm == normalize_text(item):
+                                return True
+                    return False
+
+                # Normalize the line for phrase matching
+                normalized_line = normalize_text(line)
+
+                # Remove ignored phrases (with spaces)
+                for item in ignore_items:
+                    if ' ' in item:
+                        norm_phrase = normalize_text(item)
+                        # Remove all occurrences of the phrase from the normalized line
+                        while norm_phrase in normalized_line:
+                            # Find the phrase in the original line (approximate position)
+                            # Replace in the original line (case-insensitive, ignoring punctuation)
+                            # We'll use regex for robust matching
+                            pattern = re.compile(r'\b' + re.escape(item) + r'\b', re.IGNORECASE)
+                            line = pattern.sub(' ', line)
+                            # Re-normalize after replacement
+                            normalized_line = normalize_text(line)
+
+                # Now split and filter out single ignored words
+                filtered_words = [word for word in line.split() if not any(normalize_text(word) == normalize_text(item) for item in ignore_items if ' ' not in item)]
+
+                # Only skip if the line is empty after filtering
+                if not filtered_words:
+                    continue
                 
                 # Apply gibberish filtering if enabled
                 if self.ignore_gibberish_var.get():
@@ -2659,45 +3388,34 @@ class GameTextReader:
             if hasattr(sys, 'stdout_original'):
                 sys.stdout = sys.stdout_original
 
-            # Clean up hooks for each area
-            for area_frame, hotkey_button, _, _, _, _, _ in self.areas:
-                if hasattr(hotkey_button, 'keyboard_hook'):
-                    try:
-                        keyboard.unhook(hotkey_button.keyboard_hook)
-                    except:
-                        pass
-                    
-                if hasattr(hotkey_button, 'mouse_hook'):
-                    try:
-                        mouse.unhook(hotkey_button.mouse_hook)
-                    except:
-                        pass
+            # Cleanup hotkeys
+            try:
+                self.disable_all_hotkeys()
+            except Exception as e:
+                print(f"Warning: Error cleaning up hotkeys: {e}")
             
-            # Clean up images
-            for image in self.latest_images.values():
-                try:
-                    image.close()
-                except:
-                    pass
-            self.latest_images.clear()
+            # Cleanup Tesseract engine
+            if hasattr(self, 'engine'):
+                self.engine.endLoop()
+                del self.engine
             
-            # Clean up text histories
+            # Cleanup speaker
+            if hasattr(self, 'speaker'):
+                del self.speaker
+            
+            # Cleanup hotkey scancodes and settings
+            self.hotkey_scancodes.clear()
+            self.processing_settings.clear()
             self.text_histories.clear()
             
-            # Clean up speech - modified to check if speaker exists and is not None
-            if hasattr(self, 'speaker') and self.speaker is not None:
-                try:
-                    self.speaker.Speak("", 2)  # Stop any ongoing speech
-                except:
-                    pass
-                self.speaker = None
+            # Clear all variables
+            self.hotkeys.clear()
+            self.areas.clear()
+            self.latest_images.clear()
             
-            # Clean up engine
-            if hasattr(self, 'engine'):
-                try:
-                    self.engine.stop()
-                except:
-                    pass
+            # Reset flags
+            self.is_speaking = False
+            self.setting_hotkey = False
             
         except Exception as e:
             print(f"Error during cleanup: {e}")
@@ -2801,21 +3519,34 @@ def capture_screen_area(x1, y1, x2, y2):
 
 if __name__ == "__main__":
     import tempfile, os, json
-    root = tk.Tk()
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    
+    # Use TkinterDnD's Tk instead of tkinter's Tk
+    root = TkinterDnD.Tk()
     app = GameTextReader(root)
     # Create permanent area at the top
     app.add_read_area(removable=False, editable_name=False, area_name="Auto Read")
     # Try to load settings for Auto Read area from temp folder
-    temp_path = os.path.join(tempfile.gettempdir(), 'auto_read_settings.json')
+    temp_path = os.path.join(tempfile.gettempdir(), 'GameReader', 'auto_read_settings.json')
     if os.path.exists(temp_path) and app.areas:
         try:
             with open(temp_path, 'r') as f:
                 settings = json.load(f)
             # Find the permanent area and set its settings
             area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var = app.areas[0]
+            
+            # Set all settings
             preprocess_var.set(settings.get('preprocess', False))
             voice_var.set(settings.get('voice', 'Select Voice'))
             speed_var.set(settings.get('speed', '100'))
+            
+            # Set hotkey if it exists
+            if settings.get('hotkey'):
+                hotkey_button.hotkey = settings['hotkey']
+                display_name = settings['hotkey'].replace('num_', 'num:') if settings['hotkey'].startswith('num_') else settings['hotkey']
+                hotkey_button.config(text=f"Set Hotkey: [ {display_name} ]")
+                app.setup_hotkey(hotkey_button, area_frame)
+            
             # Restore image processing settings
             brightness = settings.get('brightness', 1.0)
             contrast = settings.get('contrast', 1.0)
@@ -2826,6 +3557,7 @@ if __name__ == "__main__":
             exposure = settings.get('exposure', 1.0)
             threshold = settings.get('threshold', 128)
             threshold_enabled = settings.get('threshold_enabled', False)
+            
             # Set these in the processing_settings dict
             app.processing_settings['Auto Read'] = {
                 'brightness': brightness,
@@ -2838,6 +3570,10 @@ if __name__ == "__main__":
                 'threshold': threshold,
                 'threshold_enabled': threshold_enabled,
             }
+            
+            # Set interrupt on new scan setting
+            app.interrupt_on_new_scan_var.set(settings.get('stop_read_on_select', False))
+            
             # If the UI for these exists, set them as well
             if hasattr(app, 'processing_settings_widgets'):
                 widgets = app.processing_settings_widgets.get('Auto Read', {})
@@ -2859,16 +3595,22 @@ if __name__ == "__main__":
                     widgets['threshold'].set(threshold)
                 if 'threshold_enabled' in widgets:
                     widgets['threshold_enabled'].set(threshold_enabled)
-            # Restore hotkey if present
-            hotkey = settings.get('hotkey')
-            if hotkey:
-                hotkey_button.hotkey = hotkey
-                display_name = hotkey.replace('num_', 'num:') if hotkey.startswith('num_') else hotkey
-                hotkey_button.config(text=f"Hotkey: [ {display_name} ]")
-                app.setup_hotkey(hotkey_button, area_frame)
-            # Restore 'Stop read on select' checkbox if present
-            if hasattr(app, 'interrupt_on_new_scan_var'):
-                app.interrupt_on_new_scan_var.set(settings.get('stop_read_on_select', True))
+                print("Loaded Auto Read settings successfully")
         except Exception as e:
-            print(f"Failed to load Auto Read settings: {e}")
+            print(f"Error loading Auto Read settings: {e}")
+            print(f"Error loading Auto Read settings: {e}")
+            
+        if hasattr(app, 'interrupt_on_new_scan_var'):
+            app.interrupt_on_new_scan_var.set(settings.get('stop_read_on_select', True))
+
+        if settings.get('hotkey'):
+            hotkey_button.hotkey = settings['hotkey']
+            display_name = settings['hotkey'].replace('num_', 'num:') if settings['hotkey'].startswith('num_') else settings['hotkey']
+            hotkey_button.config(text=f"Hotkey: [ {display_name} ]")
+            app.setup_hotkey(hotkey_button, area_frame)
+
+        # Restore 'Stop read on select' checkbox if present
+        if hasattr(app, 'interrupt_on_new_scan_var'):
+            app.interrupt_on_new_scan_var.set(settings.get('stop_read_on_select', True))
+
     root.mainloop()
