@@ -28,6 +28,14 @@ import win32con
 import win32gui
 import win32ui
 from PIL import Image, ImageEnhance, ImageFilter, ImageGrab, ImageTk
+import ctypes
+
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # FIX DPI ON WINDOWS
+except AttributeError:
+    ctypes.windll.user32.SetProcessDPIAware()
+except Exception as e:
+    print(f"Warning: Could not set DPI awareness: {e}")
 
 APP_VERSION = "0.8.2"
 
@@ -3781,8 +3789,9 @@ def capture_screen_area(x1, y1, x2, y2):
     import win32gui
     import win32ui
     import win32con
-    from PIL import Image
-    
+    from PIL import ImageGrab
+    return ImageGrab.grab(bbox=(x1, y1, x2, y2))
+
     # Get DC from entire virtual screen
     hwin = win32gui.GetDesktopWindow()
     hwindc = win32gui.GetWindowDC(hwin)
