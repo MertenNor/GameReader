@@ -37,12 +37,11 @@ except AttributeError:
 except Exception as e:
     print(f"Warning: Could not set DPI awareness: {e}")
 
-APP_VERSION = "0.8.2"
+APP_VERSION = "0.8.3"
 
 CHANGELOG = """
-- Better handling of stopping speech and reinitializing the system.
-- More robust handling of mouse buttons for hotkeys.
-- URLs in the info window were broken. They now direct to your default browser when clicked.
+- Fixed an issue where the screen capture was misaligned for some users due to their DPI settings in Windows.
+ 
 """
 
 
@@ -1434,7 +1433,7 @@ class GameTextReader:
             font=("Helvetica", 10, "bold"),
             foreground='red'
         )
-        # Download instruction and clickable URL on the same line
+        # Download instruction and clickable URLs on the same line
         download_row = ttk.Frame(tesseract_frame)
         download_row.pack(anchor='w')
         download_label = ttk.Label(download_row,
@@ -1442,8 +1441,10 @@ class GameTextReader:
                                    font=("Helvetica", 10, "bold"),
                                    foreground='red')
         download_label.pack(side='left')
+        
+        # First link to Tesseract releases page
         tesseract_link = ttk.Label(download_row,
-                                   text="www.gitub.com/tesseract-ocr/tesseract/releases",
+                                   text="https://github.com/tesseract-ocr/tesseract/releases",
                                    font=("Helvetica", 10),
                                    foreground='blue',
                                    cursor='hand2')
@@ -1451,6 +1452,20 @@ class GameTextReader:
         tesseract_link.bind("<Button-1>", lambda e: open_url("https://github.com/tesseract-ocr/tesseract/releases"))
         tesseract_link.bind("<Enter>", lambda e: tesseract_link.configure(font=("Helvetica", 10, "underline")))
         tesseract_link.bind("<Leave>", lambda e: tesseract_link.configure(font=("Helvetica", 10)))
+        
+        # Add separator
+        ttk.Label(download_row, text=" | ").pack(side='left')
+        
+        # Direct download link for Windows installer
+        direct_link = ttk.Label(download_row,
+                               text="Direct link to Tesseract installer v.5.5.0",
+                               font=("Helvetica", 10),
+                               foreground='blue',
+                               cursor='hand2')
+        direct_link.pack(side='left')
+        direct_link.bind("<Button-1>", lambda e: open_url("https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe"))
+        direct_link.bind("<Enter>", lambda e: direct_link.configure(font=("Helvetica", 10, "underline")))
+        direct_link.bind("<Leave>", lambda e: direct_link.configure(font=("Helvetica", 10)))
         # Explanatory label below
         tesseract_note = ttk.Label(tesseract_frame,
                                    text="( yes, you need this if you want this program to read the text for you. )",
