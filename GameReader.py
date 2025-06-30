@@ -918,6 +918,17 @@ class GameTextReader:
             28: 'enter'
         }  # Maps scan codes to numpad keys
 
+        self.MODIFIERS = ['ctrl', 'shift', 'alt']  # Modifiers to support
+        self.ALL_MODIFIERS = ['ctrl', 'shift', 'alt']  # Used for exact modifier matching
+        self.DISPLAY_NAMES = {
+            'ctrl': 'Ctrl',
+            'shift': 'Shift',
+            'alt': 'Alt',
+            'button1': 'Left Click',
+            'button2': 'Right Click',
+            'button3': 'Middle Click',
+            }
+
         self.text_histories = {}
         self.game_units = self.load_game_units()
 
@@ -936,6 +947,18 @@ class GameTextReader:
         root.dnd_bind('<<Drop>>', self.on_drop)
         root.dnd_bind('<<DropEnter>>', lambda e: 'break')
         root.dnd_bind('<<DropPosition>>', lambda e: 'break')
+
+    def get_display_name(self, hotkey):
+        parts = hotkey.split('+')
+        display_parts = []
+        for part in parts:
+            if part in self.DISPLAY_NAMES:
+                display_parts.append(self.DISPLAY_NAMES[part])
+            elif part.startswith('numpad '):
+                display_parts.append('Num ' + part[7:])
+            else:
+                display_parts.append(part.title())
+        return '+'.join(display_parts)
 
     def speak_text(self, text):
         """Speak text using win32com.client (SAPI.SpVoice) asynchronously."""
@@ -1436,32 +1459,39 @@ class GameTextReader:
         ImageProcessingWindow(self.root, area_name, self.latest_images, self.processing_settings[area_name], self)
         
     def set_stop_hotkey(self):
-        # Disable all hotkeys to prevent interference
         try:
             self.disable_all_hotkeys()
         except Exception as e:
             print(f"Warning: Error disabling hotkeys: {e}")
 
-        self._hotkey_assignment_cancelled = False  # Guard flag to block late events
+        self._hotkey_assignment_cancelled = False
         self.setting_hotkey = True
 
         def finish_hotkey_assignment():
-            # Restore hotkeys and stop speech after assignment
             try:
                 self.restore_all_hotkeys()
             except Exception as e:
                 print(f"Warning: Error restoring hotkeys: {e}")
-            self.stop_speaking()  # Always stop speech when finishing
+            self.stop_speaking()
 
         def on_key_press(event):
-            if self._hotkey_assignment_cancelled or not self.setting_hotkey or event.scan_code == 1:  # Ignore Escape key
+            if self._hotkey_assignment_cancelled or not self.setting_hotkey or event.scan_code == 1:
                 return
+            if event.scan_code is None:  # Mouse button
+                key_name = event.name
+            elif event.name in self.MODIFIERS:
+                return
+            else:
+                if event.scan_code in self.numpad_scan_codes:
+                    key_name = 'numpad ' + self.numpad_scan_codes[event.scan_code]
+                else:
+                    key_name = event.name
 
-            key_name = event.name if event.scan_code not in self.numpad_scan_codes else f"num_{self.numpad_scan_codes[event.scan_code]}"
+            pressed_modifiers = [mod for mod in self.MODIFIERS if keyboard.is_pressed(mod)]
+            hotkey = '+'.join(pressed_modifiers + [key_name])
 
-            # Check for hotkey conflicts
             for area_frame, hotkey_button, _, area_name_var, _, _, _ in self.areas:
-                if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey == key_name:
+                if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey == hotkey:
                     show_thinkr_warning(self, area_name_var.get())
                     self._hotkey_assignment_cancelled = True
                     self.setting_hotkey = False
@@ -1469,67 +1499,39 @@ class GameTextReader:
                     finish_hotkey_assignment()
                     return
 
-            # Clean up and set new stop hotkey
+            if hotkey.startswith('button') or any(part.startswith('button') for part in hotkey.split('+')):
+                button_num = int(hotkey.split('button')[-1])
+                if button_num in [1, 2] and not self.allow_mouse_buttons_var.get():
+                    messagebox.showwarning("Error", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
+                    self._hotkey_assignment_cancelled = True
+                    self.setting_hotkey = False
+                    self.stop_hotkey_button.config(text="Set Stop Hotkey")
+                    finish_hotkey_assignment()
+                    return
+
             if hasattr(self, 'stop_hotkey'):
                 self._cleanup_hooks(self.stop_hotkey_button.mock_button)
-            self.stop_hotkey = key_name
-            mock_button = type('MockButton', (), {'hotkey': key_name, 'is_stop_button': True})
+            self.stop_hotkey = hotkey
+            mock_button = type('MockButton', (), {'hotkey': hotkey, 'is_stop_button': True})
             self.stop_hotkey_button.mock_button = mock_button
             self.setup_hotkey(mock_button, None)
-
-            # Update button display
-            display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
+            display_name = self.get_display_name(hotkey)
             self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
-            print(f"Set Stop hotkey: {key_name}\n--------------------------")
+            print(f"Set Stop hotkey: {hotkey}\n--------------------------")
             self.setting_hotkey = False
             self._hotkey_assignment_cancelled = True
             finish_hotkey_assignment()
 
         def on_mouse_click(event):
-            if (self._hotkey_assignment_cancelled or 
-                not self.setting_hotkey or 
-                not isinstance(event, mouse.ButtonEvent) or 
+            if (self._hotkey_assignment_cancelled or
+                not self.setting_hotkey or
+                not isinstance(event, mouse.ButtonEvent) or
                 event.event_type != mouse.DOWN):
                 return
+            mock_event = type('MockEvent', (), {'name': f"button{event.button}", 'scan_code': None})
+            on_key_press(mock_event)
 
-            if event.button in [1, 2] and (not hasattr(self, 'allow_mouse_buttons_var') or not self.allow_mouse_buttons_var.get()):
-                messagebox.showwarning("Error", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
-                self._hotkey_assignment_cancelled = True
-                self.setting_hotkey = False
-                self.stop_hotkey_button.config(text="Set Stop Hotkey")
-                finish_hotkey_assignment()
-                return
-
-            key_name = f"button{event.button}"
-            for area_frame, hotkey_button, _, area_name_var, _, _, _ in self.areas:
-                if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey == key_name:
-                    show_thinkr_warning(self, area_name_var.get())
-                    self._hotkey_assignment_cancelled = True
-                    self.setting_hotkey = False
-                    self.stop_hotkey_button.config(text="Set Stop Hotkey")
-                    finish_hotkey_assignment()
-                    return
-
-            # Clean up and set new stop hotkey
-            if hasattr(self, 'stop_hotkey'):
-                self._cleanup_hooks(self.stop_hotkey_button.mock_button)
-            self.stop_hotkey = key_name
-            mock_button = type('MockButton', (), {'hotkey': key_name, 'is_stop_button': True})
-            self.stop_hotkey_button.mock_button = mock_button
-            self.setup_hotkey(mock_button, None)
-
-            # Update button display
-            display_name = f"Mouse Button {event.button}"
-            self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
-            print(f"Set Stop hotkey: {key_name}\n--------------------------")
-            self.setting_hotkey = False
-            self._hotkey_assignment_cancelled = True
-            finish_hotkey_assignment()
-
-        # Set button to indicate input is expected
         self.stop_hotkey_button.config(text="Press any key or mouse button...")
-
-        # Set up temporary hooks
         try:
             self.stop_hotkey_button.keyboard_hook_temp = keyboard.on_press(on_key_press, suppress=True)
             self.stop_hotkey_button.mouse_hook_temp = mouse.hook(on_mouse_click)
@@ -1540,7 +1542,6 @@ class GameTextReader:
             finish_hotkey_assignment()
             return
 
-        # Reset button if no input is received within 5 seconds
         def reset_button():
             if not hasattr(self, 'stop_hotkey') or not self.stop_hotkey:
                 self.stop_hotkey_button.config(text="Set Stop Hotkey")
@@ -1976,16 +1977,25 @@ class GameTextReader:
             """Handle key press events during hotkey assignment."""
             if self._hotkey_assignment_cancelled or not self.setting_hotkey:
                 return
-            if event.scan_code == 1:  # Ignore Escape key
+            if event.scan_code == 1:  # Ignore Escape
                 return
 
-            key_name = event.name
-            if event.scan_code in self.numpad_scan_codes:
-                key_name = f"num_{self.numpad_scan_codes[event.scan_code]}"
+            if event.scan_code is None:  # Mouse button
+                key_name = event.name  # 'button1', etc.
+            elif event.name in self.MODIFIERS:
+                return  # Ignore modifier keys alone
+            else:
+                if event.scan_code in self.numpad_scan_codes:
+                    key_name = 'numpad ' + self.numpad_scan_codes[event.scan_code]
+                else:
+                    key_name = event.name
+
+            pressed_modifiers = [mod for mod in self.MODIFIERS if keyboard.is_pressed(mod)]
+            hotkey = '+'.join(pressed_modifiers + [key_name])
 
             # Check for duplicate hotkeys
             for area in self.areas:
-                if area[1] is not button and hasattr(area[1], 'hotkey') and area[1].hotkey == key_name:
+                if area[1] is not button and hasattr(area[1], 'hotkey') and area[1].hotkey == hotkey:
                     self.setting_hotkey = False
                     self._hotkey_assignment_cancelled = True
                     if hasattr(button, 'keyboard_hook_temp'):
@@ -1995,9 +2005,8 @@ class GameTextReader:
                         mouse.unhook(button.mouse_hook_temp)
                         delattr(button, 'mouse_hook_temp')
                     finish_hotkey_assignment()
-                    # Restore previous hotkey display or reset to default
                     if hasattr(button, 'hotkey'):
-                        display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
+                        display_name = self.get_display_name(button.hotkey)
                         button.config(text=f"Set Hotkey: [ {display_name} ]")
                     else:
                         button.config(text="Set Hotkey")
@@ -2005,9 +2014,20 @@ class GameTextReader:
                     show_thinkr_warning(self, area_name)
                     return
 
+            # Handle mouse button restrictions
+            if hotkey.startswith('button') or any(part.startswith('button') for part in hotkey.split('+')):
+                button_num = int(hotkey.split('button')[-1])
+                if button_num in [1, 2] and not self.allow_mouse_buttons_var.get():
+                    messagebox.showwarning("Warning", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
+                    self.setting_hotkey = False
+                    self._hotkey_assignment_cancelled = True
+                    finish_hotkey_assignment()
+                    button.config(text="Set Hotkey")
+                    return
+
             # Set the hotkey and finalize assignment
-            button.hotkey = key_name
-            display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
+            button.hotkey = hotkey
+            display_name = self.get_display_name(hotkey)
             button.config(text=f"Set Hotkey: [ {display_name} ]")
             self.setup_hotkey(button, area_frame)
             self.setting_hotkey = False
@@ -2023,15 +2043,7 @@ class GameTextReader:
             """Handle mouse click events during hotkey assignment."""
             if not self.setting_hotkey or not isinstance(event, mouse.ButtonEvent) or event.event_type != mouse.DOWN:
                 return
-
-            button_name = f"button{event.button}"
-            if event.button in [1, 2]:  # Left or right mouse button
-                if not self.allow_mouse_buttons_var.get():
-                    messagebox.showwarning("Warning", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
-                    return
-
-            # Create mock event and delegate to on_key_press
-            mock_event = type('MockEvent', (), {'name': button_name, 'scan_code': None})
+            mock_event = type('MockEvent', (), {'name': f"button{event.button}", 'scan_code': None})
             on_key_press(mock_event)
 
         # Clean up previous hooks
@@ -2049,7 +2061,7 @@ class GameTextReader:
                 print(f"Error cleaning up mouse hook: {e}")
 
         button.config(text="Press any key...")
-        self.setting_hotkey = True  # Enable hotkey assignment mode before installing hooks
+        self.setting_hotkey = True
         button.keyboard_hook_temp = keyboard.on_press(on_key_press)
         button.mouse_hook_temp = mouse.hook(on_mouse_click)
 
@@ -2083,6 +2095,7 @@ class GameTextReader:
                 button.config(text="Set Hotkey")
 
         self.root.after(3000, unhook_mouse)
+
     def _update_status(self, message, duration=2000):
         """Update the status label with a message and clear it after a duration."""
         if hasattr(self, 'status_label'):
@@ -2559,96 +2572,72 @@ class GameTextReader:
         return None if (event.char.isdigit() or event.keysym in allowed_keys) else 'break'
 
     def setup_hotkey(self, button, area_frame):
-        """Set up a hotkey for a button to trigger actions like reading an area or stopping speech."""
         try:
             self._cleanup_hooks(button)
-            
             if not hasattr(button, 'is_stop_button') and area_frame is not None:
                 button.area_frame = area_frame
-                
             if not hasattr(button, 'hotkey') or not button.hotkey:
                 print(f"No hotkey set for button: {button}")
                 return False
-                
             print(f"Setting up hotkey for: {button.hotkey}")
-            
+
+            parts = button.hotkey.split('+')
+            if parts[-1].startswith('button'):
+                # Mouse hotkey
+                modifiers = parts[:-1]
+                mouse_button_str = parts[-1]  # 'button1', 'button2', etc.
+                try:
+                    mouse_button = int(mouse_button_str[6:])  # Extract number
+                except ValueError:
+                    print(f"Invalid mouse button: {mouse_button_str}")
+                    return False
+
+                def on_mouse_event(event):
+                    if isinstance(event, mouse.ButtonEvent) and event.event_type == mouse.DOWN:
+                        pressed_modifiers = [mod for mod in self.ALL_MODIFIERS if keyboard.is_pressed(mod)]
+                        if event.button == mouse_button and pressed_modifiers == modifiers:
+                            handle_hotkey_action()
+
+                button.mouse_hook = mouse.hook(on_mouse_event)
+                print(f"Mouse hook set up for {button.hotkey}")
+            else:
+                # Keyboard hotkey
+                hotkey_str = button.hotkey
+                def callback():
+                    handle_hotkey_action()
+                button.keyboard_hotkey_id = keyboard.add_hotkey(hotkey_str, callback)
+                print(f"Keyboard hotkey set up for {hotkey_str}")
+
             def handle_hotkey_action():
-                """Handle the action triggered by a hotkey press."""
                 if hasattr(button, 'is_stop_button'):
                     self.root.after_idle(self.stop_speaking)
                     return True
-                    
                 area_info = self._get_area_info(button)
                 if area_info and area_info.get('name') == "Auto Read":
                     self.root.after_idle(lambda: self.set_area(
-                        area_info['frame'], 
-                        area_info['name_var'], 
+                        area_info['frame'],
+                        area_info['name_var'],
                         area_info['set_area_btn']))
                     return True
-                    
                 if getattr(button, '_is_processing', False):
                     return True
-                    
                 button._is_processing = True
                 self.stop_speaking()
                 threading.Thread(
-                    target=self.read_area, 
-                    args=(button.area_frame,), 
+                    target=self.read_area,
+                    args=(button.area_frame,),
                     daemon=True
                 ).start()
                 self.root.after(100, lambda: setattr(button, '_is_processing', False))
                 return True
-            
-            def on_hotkey(e):
-                """Handle keyboard hotkey events."""
-                try:
-                    if self.setting_hotkey or button.hotkey.startswith('button'):
-                        return False
-                        
-                    if button.hotkey.startswith('num_'):
-                        key_name = button.hotkey.replace('num_', '')
-                        if e.name != key_name or e.scan_code not in self.numpad_scan_codes:
-                            return False
-                    elif e.name != button.hotkey:
-                        return False
-                        
-                    return handle_hotkey_action()
-                except Exception as e:
-                    print(f"Error in on_hotkey: {e}")
-                    return False
-            
-            def on_mouse_click(event):
-                """Handle mouse click events."""
-                try:
-                    if (self.setting_hotkey or 
-                        getattr(self, 'hotkeys_disabled_for_selection', False) or 
-                        not isinstance(event, mouse.ButtonEvent) or 
-                        event.event_type != mouse.DOWN or 
-                        f'button{event.button}' != button.hotkey):
-                        return False
-                        
-                    return handle_hotkey_action()
-                except Exception as e:
-                    print(f"Error in on_mouse_click: {e}")
-                    return False
-            
-            if button.hotkey.startswith('button'):
-                button.mouse_hook = mouse.hook(on_mouse_click)
-                print(f"Mouse hook set up for {button.hotkey}")
-            else:
-                button.keyboard_hook = keyboard.on_press(on_hotkey)
-                print(f"Keyboard hook set up for {button.hotkey}")
-                
+
             return True
-            
         except Exception as e:
             print(f"Error in setup_hotkey: {e}")
             return False
 
     def _cleanup_hooks(self, button):
-        """Helper method to clean up existing hooks for a button"""
         try:
-            # Clean up mouse hook if it exists
             if hasattr(button, 'mouse_hook'):
                 try:
                     if button.mouse_hook in mouse._listener.handlers:
@@ -2657,26 +2646,15 @@ class GameTextReader:
                     print(f"Warning: Error cleaning up mouse hook: {e}")
                 finally:
                     delattr(button, 'mouse_hook')
-            
-            # Clean up keyboard hook if it exists
-            if hasattr(button, 'keyboard_hook'):
+            if hasattr(button, 'keyboard_hotkey_id'):
                 try:
-                    if hasattr(button.keyboard_hook, 'handler'):
-                        keyboard.unhook(button.keyboard_hook)
+                    keyboard.remove_hotkey(button.keyboard_hotkey_id)
                 except Exception as e:
-                    print(f"Warning: Error cleaning up keyboard hook: {e}")
+                    print(f"Warning: Error removing hotkey: {e}")
                 finally:
-                    delattr(button, 'keyboard_hook')
-                    
+                    delattr(button, 'keyboard_hotkey_id')
         except Exception as e:
             print(f"Unexpected error in _cleanup_hooks: {e}")
-            # Ensure attributes are deleted even on failure
-            for attr in ['mouse_hook', 'keyboard_hook']:
-                if hasattr(button, attr):
-                    try:
-                        delattr(button, attr)
-                    except Exception as del_err:
-                        print(f"Error deleting attribute {attr}: {del_err}")
 
     def _get_area_info(self, button):
         """Helper method to get area information for a button"""
