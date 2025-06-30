@@ -312,6 +312,8 @@ class ImageProcessingWindow:
         self.latest_images = latest_images
         self.settings = settings
         self.game_text_reader = game_text_reader
+        self.presets_dir = os.path.join(tempfile.gettempdir(), 'GameReader', 'presets')
+        os.makedirs(self.presets_dir, exist_ok=True)
 
         if area_name not in latest_images:
             messagebox.showerror("Error", "No image to process, generate an image by pressing the hotkey.")
@@ -335,6 +337,22 @@ class ImageProcessingWindow:
 
         control_frame = ttk.Frame(self.window)
         control_frame.grid(row=1, column=0, columnspan=5, pady=10)
+        
+        # Presets frame
+        presets_frame = ttk.Frame(control_frame)
+        presets_frame.pack(side='left', padx=10)
+
+		# Add new buttons
+        ttk.Button(presets_frame, text="Load Presets", command=self._load_preset_from_file).pack(side='left', padx=5)
+        ttk.Button(presets_frame, text="Open Folder", command=self._open_presets_folder).pack(side='left', padx=5)
+        
+        ttk.Label(presets_frame, text="Presets:").pack(side='left')
+        self.preset_var = tk.StringVar()
+        self.preset_combobox = ttk.Combobox(presets_frame, textvariable=self.preset_var, state='readonly', width=20)
+        self.preset_combobox.pack(side='left')
+        self.preset_combobox['values'] = self._get_preset_list()
+        self.preset_combobox.bind('<<ComboboxSelected>>', self._load_preset)
+        ttk.Button(presets_frame, text="Save As...", command=self._save_preset_as).pack(side='left', padx=5)
 
         scale_frame = ttk.Frame(control_frame)
         scale_frame.pack(side='left', padx=10)
@@ -382,8 +400,109 @@ class ImageProcessingWindow:
                 self.slider_vars.get(config.get("enabled_var_name"))
             )
         self.initializing = False  # Set flag to False after all sliders are created
+        print(f"Created sliders for {len(slider_configs)} configurations")  # Debug print to verify slider creation
         self.update_image()  # Optional: Update image with initial settings
 
+    def _get_preset_list(self):
+        """Retrieve the list of available presets from the presets directory."""
+        if not os.path.exists(self.presets_dir):
+            return []
+        return [f[:-7] for f in os.listdir(self.presets_dir) if f.endswith('.preset')]
+
+    def _load_preset(self, event=None):
+        """Load the selected preset and apply its settings to the sliders."""
+        selected = self.preset_var.get()
+        if not selected:
+            return
+        preset_path = os.path.join(self.presets_dir, f"{selected}.preset")
+        if os.path.exists(preset_path):
+            try:
+                with open(preset_path, 'r') as f:
+                    preset_data = json.load(f)
+                for key, value in preset_data.items():
+                    if key in self.slider_vars:
+                        self.slider_vars[key].set(value)
+                self.update_image()
+                print(f"Loaded preset: {selected}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load preset: {str(e)}")
+        else:
+            messagebox.showerror("Error", "Selected preset not found.")
+
+    def _save_preset_as(self):
+        """Save the current slider settings as a new preset."""
+        preset_name = simpledialog.askstring("Save Preset", "Enter a name for the preset:")
+        if not preset_name:
+            return
+        preset_path = os.path.join(self.presets_dir, f"{preset_name}.preset")
+        if os.path.exists(preset_path):
+            if not messagebox.askyesno("Overwrite", f"Preset '{preset_name}' already exists. Overwrite?"):
+                return
+        try:
+            preset_data = {key: var.get() for key, var in self.slider_vars.items()}
+            with open(preset_path, 'w') as f:
+                json.dump(preset_data, f, indent=4)
+            print(f"Saved preset: {preset_name}")
+            self.preset_combobox['values'] = self._get_preset_list()
+            self.preset_var.set(preset_name)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save preset: {str(e)}")
+    
+    def _load_preset_from_file(self):
+        file_path = filedialog.askopenfilename(
+            initialdir=self.presets_dir,
+            title="Select Preset File",
+            filetypes=(("Preset files", "*.preset"), ("All files", "*.*"))
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r') as f:
+                new_preset_data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load preset: {str(e)}")
+            return
+
+        preset_name = os.path.splitext(os.path.basename(file_path))[0]
+        existing_presets = self._get_preset_list()
+
+        if preset_name in existing_presets:
+            existing_path = os.path.join(self.presets_dir, f"{preset_name}.preset")
+            with open(existing_path, 'r') as f:
+                existing_data = json.load(f)
+            if existing_data == new_preset_data:
+                print(f"Preset '{preset_name}' already exists with same configuration.")
+                return
+            else:
+                # Find a new unique name
+                i = 1
+                while True:
+                    new_name = f"{preset_name} ({i})"
+                    if new_name not in existing_presets:
+                        break
+                    i += 1
+                preset_name = new_name
+
+        # Save the new preset to the presets directory
+        new_preset_path = os.path.join(self.presets_dir, f"{preset_name}.preset")
+        with open(new_preset_path, 'w') as f:
+            json.dump(new_preset_data, f, indent=4)
+
+        # Update the combobox with the new preset list
+        self.preset_combobox['values'] = self._get_preset_list()
+        self.preset_var.set(preset_name)
+        print(f"Loaded and saved new preset: {preset_name}")
+        
+    def _open_presets_folder(self):
+        if os.path.exists(self.presets_dir):
+            try:
+                os.startfile(self.presets_dir)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to open folder: {str(e)}")
+        else:
+            messagebox.showerror("Error", "Presets directory does not exist.")
+    
     def create_slider(self, label, variable, from_, to, initial, row, col, enabled_var=None):
         frame = ttk.Frame(self.window)
         frame.grid(row=row, column=col, padx=10, pady=5)
