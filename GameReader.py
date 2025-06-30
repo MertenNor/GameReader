@@ -929,7 +929,10 @@ class GameTextReader:
             'button3': 'Middle Click',
             }
 
+        # Initialize text_histories as a dictionary and add a lock for thread safety
         self.text_histories = {}
+        self.history_lock = threading.Lock()
+        
         self.game_units = self.load_game_units()
 
         self.setup_gui()
@@ -1620,6 +1623,11 @@ class GameTextReader:
         vcmd = (self.root.register(lambda P: self.validate_numeric_input(P, is_speed=True)), '%P')
         speed_entry = tk.Entry(area_frame, textvariable=speed_var, width=5, validate='all', validatecommand=vcmd)
         speed_entry.pack(side="left")
+        tk.Label(area_frame, text=" ⏐ ").pack(side="left")  # Separator
+        
+        # Add Show History button
+        history_button = tk.Button(area_frame, text="Show History", command=lambda: self.show_history(area_name_var.get()))
+        history_button.pack(side="left")
         tk.Label(area_frame, text=" ⏐ ").pack(side="left")  # Separator
         
         speed_entry.bind('<Control-v>', lambda e: 'break')
@@ -2823,6 +2831,15 @@ class GameTextReader:
             for punct in [',', ';']:
                 filtered_text = filtered_text.replace(punct, punct + ' .. ')
 
+        # Add filtered text to history with thread safety
+        with self.history_lock:
+            if area_name not in self.text_histories:
+                self.text_histories[area_name] = []
+            self.text_histories[area_name].append(filtered_text)
+            # Limit history to the last 50 entries
+            if len(self.text_histories[area_name]) > 50:
+                self.text_histories[area_name] = self.text_histories[area_name][-50:]
+
         # Configure and speak text
         if voice_var.get() != "Select Voice":
             voices = self.speaker.GetVoices()
@@ -2856,6 +2873,147 @@ class GameTextReader:
             except Exception as e2:
                 print(f"Error reinitializing speaker: {e2}")
                 self.is_speaking = False
+
+    def show_history(self, area_name):
+        """Display the history of read texts for the specified area in a new window with enhanced features."""
+        # Check if there's any history to show
+        with self.history_lock:
+            if area_name not in self.text_histories or not self.text_histories[area_name]:
+                messagebox.showinfo("History", "No history available for this area.")
+                return
+
+        # Create a new top-level window for history
+        history_window = tk.Toplevel(self.root)
+        history_window.title(f"History for {area_name}")
+        history_window.geometry("600x400")
+        history_window.transient(self.root)  # Tie to parent window
+        history_window.grab_set()  # Make modal
+
+        # Create a frame for search bar
+        search_frame = tk.Frame(history_window)
+        search_frame.pack(fill='x', padx=10, pady=5)
+        tk.Label(search_frame, text="Search:").pack(side='left')
+        search_entry = tk.Entry(search_frame)
+        search_entry.pack(side='left', fill='x', expand=True)
+
+        # Create a frame for the text widget and scrollbar
+        text_frame = tk.Frame(history_window)
+        text_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Create the text widget and scrollbar inside the frame
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, height=20, width=80)
+        scrollbar = tk.Scrollbar(text_frame, command=text_widget.yview)
+
+        # Configure grid layout
+        text_widget.grid(row=0, column=0, sticky='nsew')
+        scrollbar.grid(row=0, column=1, sticky='ns')
+        text_frame.grid_rowconfigure(0, weight=1)
+        text_frame.grid_columnconfigure(0, weight=1)
+
+        # Link the text widget and scrollbar
+        text_widget.config(yscrollcommand=scrollbar.set)
+
+        # Configure tags for styling
+        text_widget.tag_configure('header', font=('Arial', 10, 'bold'), justify='left')
+        text_widget.tag_configure('box', background='#f0f0f0', relief='groove',
+                                 borderwidth=2, spacing1=10, spacing3=10, justify='left')
+        text_widget.tag_configure('highlight', background='yellow', justify='left')
+        text_widget.tag_configure('content', justify='left', lmargin1=10, lmargin2=10, rmargin=10)
+        text_widget.tag_configure('hidden', elide=True)  # Tag to hide content
+
+        # Dictionary to store the start and end indices of each box
+        box_indices = {}
+
+        # Populate the text widget with history, applying justification
+        with self.history_lock:
+            for idx, text in enumerate(self.text_histories[area_name], 1):
+                # Insert header
+                header_start = text_widget.index(tk.END)
+                text_widget.insert(tk.END, f"Reading {idx}:\n", 'header')
+                # Insert content with justification
+                content_start = text_widget.index(tk.END)
+                text_widget.insert(tk.END, f"{text}\n\n", ('box', 'content'))
+                content_end = text_widget.index(tk.END)
+                # Store the start and end indices of the current box
+                box_indices[idx] = (header_start, content_end)
+                # Apply content tag to the content portion
+                text_widget.tag_add('content', content_start, content_end)
+
+        # Make text read-only
+        text_widget.config(state=tk.DISABLED)
+
+        def search_text(event=None):
+            # Clear previous highlights and hidden tags
+            text_widget.tag_remove('highlight', '1.0', tk.END)
+            text_widget.tag_remove('hidden', '1.0', tk.END)
+            # Get search query
+            query = search_entry.get().strip()
+            if not query:
+                # If the search query is empty, show all boxes
+                text_widget.config(state=tk.NORMAL)
+                text_widget.tag_remove('hidden', '1.0', tk.END)
+                text_widget.config(state=tk.DISABLED)
+                return
+            # List to store indices of boxes that contain the query
+            matching_boxes = set()
+            # Search through each box for the query
+            for idx, (start, end) in box_indices.items():
+                # Get the text of the current box
+                box_text = text_widget.get(start, end)
+                if query.lower() in box_text.lower():
+                    matching_boxes.add(idx)
+            if matching_boxes:
+                all_boxes_to_show = matching_boxes  # Only show matching boxes, hide all others
+                # Hide boxes that are not in all_boxes_to_show
+                text_widget.config(state=tk.NORMAL)
+                for idx, (start, end) in box_indices.items():
+                    if idx not in all_boxes_to_show:
+                        text_widget.tag_add('hidden', start, end)
+                text_widget.config(state=tk.DISABLED)
+                # Highlight the query in the visible boxes
+                for idx in all_boxes_to_show:
+                    start, end = box_indices[idx]
+                    text_widget.config(state=tk.NORMAL)
+                    text_widget.tag_remove('highlight', start, end)
+                    # Search for the query within the current box
+                    idx_pos = start
+                    while True:
+                        idx_pos = text_widget.search(query, idx_pos, nocase=1, stopindex=end)
+                        if not idx_pos:
+                            break
+                        lastidx = f"{idx_pos}+{len(query)}c"
+                        text_widget.tag_add('highlight', idx_pos, lastidx)
+                        idx_pos = lastidx
+                    text_widget.config(state=tk.DISABLED)
+            else:
+                # If no matches, hide all boxes
+                text_widget.config(state=tk.NORMAL)
+                for idx, (start, end) in box_indices.items():
+                    text_widget.tag_add('hidden', start, end)
+                text_widget.config(state=tk.DISABLED)
+
+        # Bind the search_text function to the KeyRelease event for live search
+        search_entry.bind('<KeyRelease>', search_text)
+
+        # Add context menu for copying text
+        context_menu = tk.Menu(text_widget, tearoff=0)
+        context_menu.add_command(label="Copy", command=lambda: text_widget.event_generate('<<Copy>>'))
+        context_menu.add_command(label="Select All", command=lambda: text_widget.tag_add('sel', '1.0', 'end'))
+        text_widget.bind("<Button-3>", lambda event: context_menu.tk_popup(event.x_root, event.y_root))
+
+        # Center the window relative to the main window
+        history_window.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() // 2 - history_window.winfo_width() // 2)
+        y = self.root.winfo_rooty() + (self.root.winfo_height() // 2 - history_window.winfo_height() // 2)
+        history_window.geometry(f"+{x}+{y}")
+
+        # Ensure hotkeys are restored on close
+        def on_close():
+            history_window.destroy()
+            self.restore_all_hotkeys()
+
+        history_window.protocol("WM_DELETE_WINDOW", on_close)
+        history_window.bind("<Escape>", lambda e: on_close())
 
     def cleanup(self):
         """Proper cleanup method for the application"""
