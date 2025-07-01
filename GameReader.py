@@ -983,8 +983,8 @@ class GameTextReader:
         for part in parts:
             if part in self.DISPLAY_NAMES:
                 display_parts.append(self.DISPLAY_NAMES[part])
-            elif part.startswith('numpad '):
-                display_parts.append('Num ' + part[7:])
+            elif part.startswith('num '):
+                display_parts.append('Num ' + part[4:])
             else:
                 display_parts.append(part.title())
         return '+'.join(display_parts)
@@ -1604,7 +1604,7 @@ class GameTextReader:
                 return
             else:
                 if event.scan_code in self.numpad_scan_codes:
-                    key_name = 'numpad ' + self.numpad_scan_codes[event.scan_code]
+                    key_name = 'num ' + self.numpad_scan_codes[event.scan_code]
                 else:
                     key_name = event.name
 
@@ -2112,7 +2112,7 @@ class GameTextReader:
                 return  # Ignore modifier keys alone
             else:
                 if event.scan_code in self.numpad_scan_codes:
-                    key_name = 'numpad ' + self.numpad_scan_codes[event.scan_code]
+                    key_name = 'num ' + self.numpad_scan_codes[event.scan_code]
                 else:
                     key_name = event.name
 
