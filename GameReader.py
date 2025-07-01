@@ -885,6 +885,32 @@ class GameTextReader:
             _ = self.engine.getProperty('rate')
             self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
             self.speaker.Volume = int(self.volume.get())
+            # Check for RealtimeTTS availability
+            self.realtimetts_available = False
+            self.available_realtimetts_engines = []
+            self.current_stream = None  # To manage RealtimeTTS stream
+            try:
+                import RealtimeTTS
+                self.realtimetts_available = True
+                possible_engines = [
+                    "SystemEngine", "AzureEngine", "ElevenlabsEngine", "CoquiEngine",
+                    "OpenAIEngine", "GTTSEngine", "EdgeEngine", "ParlerEngine",
+                    "StyleTTSEngine", "PiperEngine", "KokoroEngine", "OrpheusEngine"
+                ]
+                for engine_name in possible_engines:
+                    try:
+                        engine_class = getattr(RealtimeTTS, engine_name)
+                        self.available_realtimetts_engines.append(engine_name)
+                    except AttributeError:
+                        pass
+            except ImportError:
+                pass
+
+            # TTS engine selection variables
+            self.tts_engine_var = tk.StringVar(value="Windows TTS")
+            self.realtimetts_engine_var = tk.StringVar(value="")
+            if self.realtimetts_available and self.available_realtimetts_engines:
+                self.realtimetts_engine_var.set(self.available_realtimetts_engines[0])
         except Exception as e:
             print(f"Warning: Could not initialize text-to-speech: {e}")
             print("Text-to-speech functionality may be limited.")
@@ -964,54 +990,110 @@ class GameTextReader:
         return '+'.join(display_parts)
 
     def speak_text(self, text):
-        """Speak text using win32com.client (SAPI.SpVoice) asynchronously."""
-        if not hasattr(self, 'speaker') or self.speaker is None:
-            print("Warning: Text-to-speech unavailable. Check system speech settings.")
-            return
+        """Speak text using the selected TTS engine."""
+        if self.tts_engine_var.get() == "Windows TTS":
+            if not hasattr(self, 'speaker') or self.speaker is None:
+                print("Warning: Text-to-speech unavailable. Check system speech settings.")
+                return
 
-        # Handle interrupt or ongoing speech
-        if getattr(self, 'interrupt_on_new_scan_var', None) and self.interrupt_on_new_scan_var.get():
-            self.stop_speaking()
-        elif self.is_speaking:
-            print("Already speaking. Stop current speech to proceed.")
-            return
+            # Handle interrupt or ongoing speech
+            if getattr(self, 'interrupt_on_new_scan_var', None) and self.interrupt_on_new_scan_var.get():
+                self.stop_speaking()
+            elif self.is_speaking:
+                print("Already speaking. Stop current speech to proceed.")
+                return
 
-        self.is_speaking = True
-        try:
-            self.speaker.Speak(text, 1)  # SVSFlagsAsync = 1
-            print("Speech started.\n--------------------------")
-        except AttributeError as e:
-            print(f"Speech failed: Invalid speaker object - {e}")
-            self.is_speaking = False
-        except Exception as e:
-            print(f"Unexpected error during speech: {e}")
-            self.is_speaking = False
+            self.is_speaking = True
+            try:
+                self.speaker.Speak(text, 1)  # SVSFlagsAsync = 1
+                print("Speech started.\n--------------------------")
+            except AttributeError as e:
+                print(f"Speech failed: Invalid speaker object - {e}")
+                self.is_speaking = False
+            except Exception as e:
+                print(f"Unexpected error during speech: {e}")
+                self.is_speaking = False
+        else:
+            # RealtimeTTS
+            if not self.realtimetts_available:
+                messagebox.showerror("Error", "RealtimeTTS is not installed.")
+                return
+            engine_name = self.realtimetts_engine_var.get()
+            if not engine_name:
+                messagebox.showerror("Error", "No RealtimeTTS engine selected.")
+                return
+            try:
+                import RealtimeTTS
+                # Handle engines requiring specific parameters
+                if engine_name == "AzureEngine":
+                    speech_key = os.environ.get("AZURE_SPEECH_KEY")
+                    region = os.environ.get("AZURE_SPEECH_REGION")
+                    if not speech_key or not region:
+                        raise ValueError("AZURE_SPEECH_KEY and AZURE_SPEECH_REGION must be set in environment variables.")
+                    engine = RealtimeTTS.AzureEngine(speech_key, region)
+                elif engine_name == "ElevenlabsEngine":
+                    api_key = os.environ.get("ELEVENLABS_API_KEY")
+                    if not api_key:
+                        raise ValueError("ELEVENLABS_API_KEY must be set in environment variables.")
+                    engine = RealtimeTTS.ElevenlabsEngine(api_key)
+                elif engine_name == "OpenAIEngine":
+                    # Assumes OPENAI_API_KEY is set in environment
+                    engine = RealtimeTTS.OpenAIEngine()
+                else:
+                    engine_class = getattr(RealtimeTTS, engine_name)
+                    engine = engine_class()
+
+                # Handle interrupt or ongoing speech
+                if getattr(self, 'interrupt_on_new_scan_var', None) and self.interrupt_on_new_scan_var.get():
+                    self.stop_speaking()
+                elif self.is_speaking:
+                    print("Already speaking. Stop current speech to proceed.")
+                    return
+
+                stream = RealtimeTTS.TextToAudioStream(engine)
+                self.current_stream = stream
+                stream.feed(text)
+                stream.play_async()
+                self.is_speaking = True
+                print("RealtimeTTS speech started.\n--------------------------")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to use RealtimeTTS engine {engine_name}: {str(e)}")
+                self.is_speaking = False
 
     def stop_speaking(self):
-        """Stop ongoing speech immediately."""
-        if not hasattr(self, 'speaker') or self.speaker is None:
-            self.is_speaking = False
-            return
-
-        try:
-            self.speaker.Speak("", 2)  # SVSFPurgeBeforeSpeak = 2
-            self.is_speaking = False
-            print("Speech stopped.\n--------------------------")
-        except AttributeError as e:
-            print(f"Error stopping speech: Invalid speaker object - {e}")
-            self.is_speaking = False
-            # Reinitialize only on failure
+        """Stop ongoing speech for the selected TTS engine."""
+        if self.tts_engine_var.get() == "Windows TTS":
+            if not hasattr(self, 'speaker') or self.speaker is None:
+                self.is_speaking = False
+                return
             try:
-                self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
-                self.speaker.Volume = int(self.volume.get())
-            except ValueError as e2:
-                print(f"Warning: Invalid volume value '{self.volume.get()}': {e2}")
-                self.speaker.Volume = 100
-            except Exception as e2:
-                print(f"Warning: Could not reinitialize speech engine: {e2}")
-                self.speaker = None
-        except Exception as e:
-            print(f"Unexpected error stopping speech: {e}")
+                self.speaker.Speak("", 2)  # SVSFPurgeBeforeSpeak = 2
+                self.is_speaking = False
+                print("Speech stopped.\n--------------------------")
+            except AttributeError as e:
+                print(f"Error stopping speech: Invalid speaker object - {e}")
+                self.is_speaking = False
+                try:
+                    self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                    self.speaker.Volume = int(self.volume.get())
+                except ValueError as e2:
+                    print(f"Warning: Invalid volume value '{self.volume.get()}': {e2}")
+                    self.speaker.Volume = 100
+                except Exception as e2:
+                    print(f"Warning: Could not reinitialize speech engine: {e2}")
+                    self.speaker = None
+            except Exception as e:
+                print(f"Unexpected error stopping speech: {e}")
+                self.is_speaking = False
+        else:
+            if hasattr(self, 'current_stream') and self.current_stream:
+                try:
+                    self.current_stream.stop()
+                    print("RealtimeTTS stream stopped.\n--------------------------")
+                except Exception as e:
+                    print(f"Error stopping RealtimeTTS stream: {e}")
+                finally:
+                    self.current_stream = None
             self.is_speaking = False
 
     def restart_tesseract(self):
@@ -1031,6 +1113,32 @@ class GameTextReader:
         
         control_frame = tk.Frame(self.root)
         control_frame.pack(fill='x', padx=10, pady=5)
+        
+        # TTS engine selection frame
+        tts_frame = tk.Frame(self.root)
+        tts_frame.pack(fill='x', padx=10, pady=5)
+
+        tk.Label(tts_frame, text="TTS Engine:").pack(side='left')
+
+        tts_options = ["Windows TTS"]
+        if self.realtimetts_available:
+            tts_options.append("RealtimeTTS")
+
+        self.tts_engine_combobox = ttk.Combobox(tts_frame, textvariable=self.tts_engine_var, values=tts_options, state='readonly')
+        self.tts_engine_combobox.pack(side='left', padx=5)
+        self.tts_engine_combobox.bind('<<ComboboxSelected>>', self.on_tts_engine_selected)
+
+        # RealtimeTTS engine selection (hidden initially)
+        self.realtimetts_engine_label = tk.Label(tts_frame, text="RealtimeTTS Engine:")
+        self.realtimetts_engine_combobox = ttk.Combobox(tts_frame, textvariable=self.realtimetts_engine_var, 
+                                                        values=self.available_realtimetts_engines, state='readonly')
+        self.realtimetts_engine_label.pack_forget()
+        self.realtimetts_engine_combobox.pack_forget()
+
+        # Show RealtimeTTS engine dropdown if RealtimeTTS is selected
+        if self.tts_engine_var.get() == "RealtimeTTS":
+            self.realtimetts_engine_label.pack(side='left', padx=(10, 0))
+            self.realtimetts_engine_combobox.pack(side='left', padx=5)
         
         options_frame = tk.Frame(self.root)
         options_frame.pack(fill='x', padx=10, pady=5)
@@ -1137,6 +1245,16 @@ class GameTextReader:
         self.root.bind("<Button-1>", self.remove_focus)
         
         print("GUI setup complete.")
+
+    def on_tts_engine_selected(self, event):
+        """Handle TTS engine selection change."""
+        selected = self.tts_engine_var.get()
+        if selected == "RealtimeTTS":
+            self.realtimetts_engine_label.pack(side='left', padx=(10, 0))
+            self.realtimetts_engine_combobox.pack(side='left', padx=5)
+        else:
+            self.realtimetts_engine_label.pack_forget()
+            self.realtimetts_engine_combobox.pack_forget()
 
     def create_checkbox(self, parent, text, variable, side='top', padx=0, pady=2):
         """Helper method to create and return a checkbox with a label.
@@ -2841,38 +2959,25 @@ class GameTextReader:
                 self.text_histories[area_name] = self.text_histories[area_name][-50:]
 
         # Configure and speak text
-        if voice_var.get() != "Select Voice":
-            voices = self.speaker.GetVoices()
-            for voice in voices:
-                if voice.GetDescription() == voice_var.get():
-                    self.speaker.Voice = voice
-                    break
-            else:
-                messagebox.showerror("Error", "Selected voice not found.")
-                return
+        if self.tts_engine_var.get() == "Windows TTS":
+            if voice_var.get() != "Select Voice":
+                voices = self.speaker.GetVoices()
+                for voice in voices:
+                    if voice.GetDescription() == voice_var.get():
+                        self.speaker.Voice = voice
+                        break
+                else:
+                    messagebox.showerror("Error", "Selected voice not found.")
+                    return
 
-        try:
-            speed = int(speed_var.get())
-            if speed > 0:
-                self.speaker.Rate = (speed - 100) // 10
-        except ValueError:
-            pass
-        
-        try:
-            vol = int(self.volume.get())
-            self.speaker.Volume = vol if 0 <= vol <= 100 else 100
-            self.is_speaking = True
-            self.speaker.Speak(filtered_text, 1)
-            print("Speech started.\n--------------------------")
-        except Exception as e:
-            print(f"Error during speech: {e}")
-            self.is_speaking = False
             try:
-                self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
-                self.speaker.Volume = int(self.volume.get())
-            except Exception as e2:
-                print(f"Error reinitializing speaker: {e2}")
-                self.is_speaking = False
+                speed = int(speed_var.get())
+                if speed > 0:
+                    self.speaker.Rate = (speed - 100) // 10
+            except ValueError:
+                pass
+
+        self.speak_text(filtered_text)
 
     def show_history(self, area_name):
         """Display the history of read texts for the specified area in a new window with enhanced features."""
