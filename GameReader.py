@@ -979,6 +979,14 @@ class GameTextReader:
         root.dnd_bind('<<DropEnter>>', lambda e: 'break')
         root.dnd_bind('<<DropPosition>>', lambda e: 'break')
 
+    def set_hotkey_if_not_setting(self, button, area_frame):
+        if not self.setting_hotkey:
+            self.set_hotkey(button, area_frame)
+
+    def set_stop_hotkey_if_not_setting(self):
+        if not self.setting_hotkey:
+            self.set_stop_hotkey()
+
     def get_display_name(self, hotkey):
         parts = hotkey.split('+')
         display_parts = []
@@ -1212,6 +1220,7 @@ class GameTextReader:
         self.status_frame.pack(side='left', fill='x', expand=True, padx=10)
         self.status_label = tk.Label(self.status_frame, text="", font=("Helvetica", 10), fg="black")
         self.status_label.pack(side='top')
+        self.stop_hotkey_button = tk.Button(add_area_frame, text="Set Stop Hotkey", command=lambda: self.set_stop_hotkey_if_not_setting())
         
         self.stop_hotkey_button = tk.Button(add_area_frame, text="Set Stop Hotkey", command=self.set_stop_hotkey)
         self.stop_hotkey_button.pack(side='right')
@@ -1721,6 +1730,7 @@ class GameTextReader:
         hotkey_button = tk.Button(area_frame, text="Set Hotkey")
         hotkey_button.config(command=lambda: self.set_hotkey(hotkey_button, area_frame))
         hotkey_button.pack(side="left")
+        hotkey_button.config(command=lambda: self.set_hotkey_if_not_setting(hotkey_button, area_frame))
         tk.Label(area_frame, text=" ⏐ ").pack(side="left")  # Separator
 
         # Image Processing controls
