@@ -950,9 +950,11 @@ class GameTextReader:
             'ctrl': 'Ctrl',
             'shift': 'Shift',
             'alt': 'Alt',
-            'button1': 'Left Click',
-            'button2': 'Right Click',
-            'button3': 'Middle Click',
+            'mouse_left': 'Left Click',
+            'mouse_right': 'Right Click',
+            'mouse_middle': 'Middle Click',
+            'mouse_x': 'Mouse Button 4',
+            'mouse_x2': 'Mouse Button 5',
             }
 
         # Initialize text_histories as a dictionary and add a lock for thread safety
@@ -1611,6 +1613,7 @@ class GameTextReader:
             pressed_modifiers = [mod for mod in self.MODIFIERS if keyboard.is_pressed(mod)]
             hotkey = '+'.join(pressed_modifiers + [key_name])
 
+            # Check for duplicate hotkeys
             for area_frame, hotkey_button, _, area_name_var, _, _, _ in self.areas:
                 if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey == hotkey:
                     show_thinkr_warning(self, area_name_var.get())
@@ -1620,15 +1623,15 @@ class GameTextReader:
                     finish_hotkey_assignment()
                     return
 
-            if hotkey.startswith('button') or any(part.startswith('button') for part in hotkey.split('+')):
-                button_num = int(hotkey.split('button')[-1])
-                if button_num in [1, 2] and not self.allow_mouse_buttons_var.get():
-                    messagebox.showwarning("Error", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
-                    self._hotkey_assignment_cancelled = True
-                    self.setting_hotkey = False
-                    self.stop_hotkey_button.config(text="Set Stop Hotkey")
-                    finish_hotkey_assignment()
-                    return
+            # Handle mouse button restrictions
+            parts = hotkey.split('+')
+            if parts[-1] in ['mouse_left', 'mouse_right'] and not self.allow_mouse_buttons_var.get():
+                messagebox.showwarning("Warning", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
+                self._hotkey_assignment_cancelled = True
+                self.setting_hotkey = False
+                self.stop_hotkey_button.config(text="Set Stop Hotkey")
+                finish_hotkey_assignment()
+                return
 
             if hasattr(self, 'stop_hotkey'):
                 self._cleanup_hooks(self.stop_hotkey_button.mock_button)
@@ -1649,7 +1652,7 @@ class GameTextReader:
                 not isinstance(event, mouse.ButtonEvent) or
                 event.event_type != mouse.DOWN):
                 return
-            mock_event = type('MockEvent', (), {'name': f"button{event.button}", 'scan_code': None})
+            mock_event = type('MockEvent', (), {'name': f"mouse_{event.button}", 'scan_code': None})
             on_key_press(mock_event)
 
         self.stop_hotkey_button.config(text="Press any key or mouse button...")
@@ -2141,15 +2144,14 @@ class GameTextReader:
                     return
 
             # Handle mouse button restrictions
-            if hotkey.startswith('button') or any(part.startswith('button') for part in hotkey.split('+')):
-                button_num = int(hotkey.split('button')[-1])
-                if button_num in [1, 2] and not self.allow_mouse_buttons_var.get():
-                    messagebox.showwarning("Warning", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
-                    self.setting_hotkey = False
-                    self._hotkey_assignment_cancelled = True
-                    finish_hotkey_assignment()
-                    button.config(text="Set Hotkey")
-                    return
+            parts = hotkey.split('+')
+            if parts[-1] in ['mouse_left', 'mouse_right'] and not self.allow_mouse_buttons_var.get():
+                messagebox.showwarning("Warning", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
+                self.setting_hotkey = False
+                self._hotkey_assignment_cancelled = True
+                finish_hotkey_assignment()
+                button.config(text="Set Hotkey")
+                return
 
             # Set the hotkey and finalize assignment
             button.hotkey = hotkey
@@ -2169,7 +2171,7 @@ class GameTextReader:
             """Handle mouse click events during hotkey assignment."""
             if not self.setting_hotkey or not isinstance(event, mouse.ButtonEvent) or event.event_type != mouse.DOWN:
                 return
-            mock_event = type('MockEvent', (), {'name': f"button{event.button}", 'scan_code': None})
+            mock_event = type('MockEvent', (), {'name': f"mouse_{event.button}", 'scan_code': None})
             on_key_press(mock_event)
 
         # Clean up previous hooks
@@ -2708,21 +2710,16 @@ class GameTextReader:
             print(f"Setting up hotkey for: {button.hotkey}")
 
             parts = button.hotkey.split('+')
-            if parts[-1].startswith('button'):
+            if parts[-1].startswith('mouse_'):
                 # Mouse hotkey
                 modifiers = parts[:-1]
-                mouse_button_str = parts[-1]  # 'button1', 'button2', etc.
-                try:
-                    mouse_button = int(mouse_button_str[6:])  # Extract number
-                except ValueError:
-                    print(f"Invalid mouse button: {mouse_button_str}")
-                    return False
+                mouse_button = parts[-1][6:]  # 'button1', 'button2', etc.
 
                 def on_mouse_event(event):
-                    if isinstance(event, mouse.ButtonEvent) and event.event_type == mouse.DOWN:
-                        pressed_modifiers = [mod for mod in self.ALL_MODIFIERS if keyboard.is_pressed(mod)]
-                        if event.button == mouse_button and pressed_modifiers == modifiers:
-                            handle_hotkey_action()
+                        if isinstance(event, mouse.ButtonEvent) and event.event_type == mouse.DOWN:
+                            pressed_modifiers = [mod for mod in self.ALL_MODIFIERS if keyboard.is_pressed(mod)]
+                            if event.button == mouse_button and pressed_modifiers == modifiers:
+                                handle_hotkey_action()
 
                 button.mouse_hook = mouse.hook(on_mouse_event)
                 print(f"Mouse hook set up for {button.hotkey}")
