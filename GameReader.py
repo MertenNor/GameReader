@@ -8,6 +8,7 @@ import io
 import json
 import os
 import datetime
+import queue
 import re
 import sys
 import threading
@@ -32,6 +33,7 @@ import win32gui
 import win32ui
 from PIL import Image, ImageEnhance, ImageFilter, ImageGrab, ImageTk
 import ctypes
+import subprocess
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)  # FIX DPI ON WINDOWS
@@ -960,6 +962,7 @@ class GameTextReader:
         # Initialize text_histories as a dictionary and add a lock for thread safety
         self.text_histories = {}
         self.history_lock = threading.Lock()
+        self.tts_queue = queue.Queue()
         
         self.game_units = self.load_game_units()
 
@@ -978,6 +981,7 @@ class GameTextReader:
         root.dnd_bind('<<Drop>>', self.on_drop)
         root.dnd_bind('<<DropEnter>>', lambda e: 'break')
         root.dnd_bind('<<DropPosition>>', lambda e: 'break')
+        self.root.after(100, self._process_tts_queue)
 
     def set_hotkey_if_not_setting(self, button, area_frame):
         if not self.setting_hotkey:
@@ -999,30 +1003,11 @@ class GameTextReader:
                 display_parts.append(part.title())
         return '+'.join(display_parts)
 
-    def speak_text(self, text):
+    def speak_text(self, text, voice, speed):
         """Speak text using the selected TTS engine."""
         if self.tts_engine_var.get() == "Windows TTS":
-            if not hasattr(self, 'speaker') or self.speaker is None:
-                print("Warning: Text-to-speech unavailable. Check system speech settings.")
-                return
-
-            # Handle interrupt or ongoing speech
-            if getattr(self, 'interrupt_on_new_scan_var', None) and self.interrupt_on_new_scan_var.get():
-                self.stop_speaking()
-            elif self.is_speaking:
-                print("Already speaking. Stop current speech to proceed.")
-                return
-
-            self.is_speaking = True
-            try:
-                self.speaker.Speak(text, 1)  # SVSFlagsAsync = 1
-                print("Speech started.\n--------------------------")
-            except AttributeError as e:
-                print(f"Speech failed: Invalid speaker object - {e}")
-                self.is_speaking = False
-            except Exception as e:
-                print(f"Unexpected error during speech: {e}")
-                self.is_speaking = False
+            payload = (text, voice, speed)
+            self.tts_queue.put(("SPEAK", payload))
         else:
             # RealtimeTTS
             if not self.realtimetts_available:
@@ -1599,6 +1584,10 @@ class GameTextReader:
         self._hotkey_assignment_cancelled = False
         self.setting_hotkey = True
 
+        # Store the previous hotkey and button text
+        prev_hotkey = getattr(self, 'stop_hotkey', None)
+        prev_button_text = self.stop_hotkey_button.cget('text')
+
         def finish_hotkey_assignment():
             try:
                 self.restore_all_hotkeys()
@@ -1628,7 +1617,12 @@ class GameTextReader:
                     show_thinkr_warning(self, area_name_var.get())
                     self._hotkey_assignment_cancelled = True
                     self.setting_hotkey = False
-                    self.stop_hotkey_button.config(text="Set Stop Hotkey")
+                    # Restore previous hotkey text if any
+                    if prev_hotkey:
+                        display_name = self.get_display_name(prev_hotkey)
+                        self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
+                    else:
+                        self.stop_hotkey_button.config(text="Set Stop Hotkey")
                     finish_hotkey_assignment()
                     return
 
@@ -1638,11 +1632,16 @@ class GameTextReader:
                 messagebox.showwarning("Warning", "Left and right mouse buttons cannot be used as hotkeys.\nCheck 'Allow mouse left/right:' to enable them.")
                 self._hotkey_assignment_cancelled = True
                 self.setting_hotkey = False
-                self.stop_hotkey_button.config(text="Set Stop Hotkey")
+                # Restore previous hotkey text if any
+                if prev_hotkey:
+                    display_name = self.get_display_name(prev_hotkey)
+                    self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
+                else:
+                    self.stop_hotkey_button.config(text="Set Stop Hotkey")
                 finish_hotkey_assignment()
                 return
 
-            if hasattr(self, 'stop_hotkey'):
+            if hasattr(self.stop_hotkey_button, 'mock_button'):
                 self._cleanup_hooks(self.stop_hotkey_button.mock_button)
             self.stop_hotkey = hotkey
             mock_button = type('MockButton', (), {'hotkey': hotkey, 'is_stop_button': True})
@@ -1664,25 +1663,75 @@ class GameTextReader:
             mock_event = type('MockEvent', (), {'name': f"mouse_{event.button}", 'scan_code': None})
             on_key_press(mock_event)
 
-        self.stop_hotkey_button.config(text="Press any key or mouse button...")
-        try:
-            self.stop_hotkey_button.keyboard_hook_temp = keyboard.on_press(on_key_press, suppress=True)
-            self.stop_hotkey_button.mouse_hook_temp = mouse.hook(on_mouse_click)
-        except Exception as e:
-            print(f"Error setting up hotkey hooks: {e}")
-            self.stop_hotkey_button.config(text="Set Stop Hotkey")
-            self.setting_hotkey = False
-            finish_hotkey_assignment()
-            return
+        # Clean up previous hooks if any
+        if hasattr(self.stop_hotkey_button, 'keyboard_hook_temp'):
+            try:
+                keyboard.unhook(self.stop_hotkey_button.keyboard_hook_temp)
+            except Exception:
+                pass
+            delattr(self.stop_hotkey_button, 'keyboard_hook_temp')
+        if hasattr(self.stop_hotkey_button, 'mouse_hook_temp'):
+            try:
+                mouse.unhook(self.stop_hotkey_button.mouse_hook_temp)
+            except Exception:
+                pass
+            delattr(self.stop_hotkey_button, 'mouse_hook_temp')
 
-        def reset_button():
-            if not hasattr(self, 'stop_hotkey') or not self.stop_hotkey:
+        self.stop_hotkey_button.config(text="Press any key (10s)...")
+        self.setting_hotkey = True
+        self.stop_hotkey_button.keyboard_hook_temp = keyboard.on_press(on_key_press)
+        self.stop_hotkey_button.mouse_hook_temp = mouse.hook(on_mouse_click)
+        self.stop_hotkey_button.countdown_remaining = 10
+        self.stop_hotkey_button.config(text=f"Press key ({self.stop_hotkey_button.countdown_remaining}s)")
+
+        def update_countdown():
+            if not self.setting_hotkey or not hasattr(self.stop_hotkey_button, 'countdown_remaining') or self.stop_hotkey_button.countdown_remaining <= 0:
+                return
+            self.stop_hotkey_button.countdown_remaining -= 1
+            if self.stop_hotkey_button.countdown_remaining > 0:
+                self.stop_hotkey_button.config(text=f"Press key ({self.stop_hotkey_button.countdown_remaining}s)")
+                self.stop_hotkey_button.countdown_timer = self.root.after(1000, update_countdown)
+            else:
+                # Time's up, cancel hotkey setting
+                if prev_hotkey:
+                    display_name = self.get_display_name(prev_hotkey)
+                    self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
+                else:
+                    self.stop_hotkey_button.config(text="Set Stop Hotkey")
+                self.setting_hotkey = False
+                self._hotkey_assignment_cancelled = True
+                # Unhook temporary hooks
+                if hasattr(self.stop_hotkey_button, 'keyboard_hook_temp'):
+                    keyboard.unhook(self.stop_hotkey_button.keyboard_hook_temp)
+                    delattr(self.stop_hotkey_button, 'keyboard_hook_temp')
+                if hasattr(self.stop_hotkey_button, 'mouse_hook_temp'):
+                    mouse.unhook(self.stop_hotkey_button.mouse_hook_temp)
+                    delattr(self.stop_hotkey_button, 'mouse_hook_temp')
+                finish_hotkey_assignment()
+
+        self.stop_hotkey_button.countdown_timer = self.root.after(1000, update_countdown)
+
+        # Add Escape key binding to cancel hotkey assignment
+        def on_escape(event):
+            if prev_hotkey:
+                display_name = self.get_display_name(prev_hotkey)
+                self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
+            else:
                 self.stop_hotkey_button.config(text="Set Stop Hotkey")
-            self._hotkey_assignment_cancelled = True
             self.setting_hotkey = False
+            self._hotkey_assignment_cancelled = True
+            # Unhook temporary hooks
+            if hasattr(self.stop_hotkey_button, 'keyboard_hook_temp'):
+                keyboard.unhook(self.stop_hotkey_button.keyboard_hook_temp)
+                delattr(self.stop_hotkey_button, 'keyboard_hook_temp')
+            if hasattr(self.stop_hotkey_button, 'mouse_hook_temp'):
+                mouse.unhook(self.stop_hotkey_button.mouse_hook_temp)
+                delattr(self.stop_hotkey_button, 'mouse_hook_temp')
             finish_hotkey_assignment()
+            # Unbind Escape after use
+            self.root.unbind('<Escape>')
 
-        self.unhook_timer = self.root.after(5000, reset_button)
+        self.root.bind('<Escape>', on_escape)
 
     def validate_numeric_input(self, P: str, is_speed: bool = False) -> bool:
         """Validate input to only allow numbers with different limits for speed and volume."""
@@ -2236,6 +2285,28 @@ class GameTextReader:
 
         button.countdown_timer = self.root.after(1000, update_countdown)
 
+        # Add Escape key binding to cancel hotkey assignment for area hotkeys
+        def on_escape(event):
+            if hasattr(button, 'hotkey') and button.hotkey:
+                display_name = self.get_display_name(button.hotkey)
+                button.config(text=f"Set Hotkey: [ {display_name} ]")
+            else:
+                button.config(text="Set Hotkey")
+            self.setting_hotkey = False
+            self._hotkey_assignment_cancelled = True
+            # Unhook temporary hooks
+            if hasattr(button, 'keyboard_hook_temp'):
+                keyboard.unhook(button.keyboard_hook_temp)
+                delattr(button, 'keyboard_hook_temp')
+            if hasattr(button, 'mouse_hook_temp'):
+                mouse.unhook(button.mouse_hook_temp)
+                delattr(button, 'mouse_hook_temp')
+            finish_hotkey_assignment()
+            # Unbind Escape after use
+            self.root.unbind('<Escape>')
+
+        self.root.bind('<Escape>', on_escape)
+
     def _update_status(self, message, duration=2000):
         """Update the status label with a message and clear it after a duration."""
         if hasattr(self, 'status_label'):
@@ -2589,7 +2660,7 @@ class GameTextReader:
                 self.areas[0][1].hotkey = auto_read_hotkey
                 display_name = auto_read_hotkey.replace('num_', 'num:') if auto_read_hotkey.startswith('num_') else auto_read_hotkey
                 self.areas[0][1].config(text=f"Hotkey: [ {display_name} ]")
-                self.setup_hotkey(self.areas[0][1], self.areas[ mi0][0])
+                self.setup_hotkey(self.areas[0][1], self.areas[0][0])
                 print(f"Re-registered Auto Read hotkey: {auto_read_hotkey}")
             except Exception as e:
                 print(f"Error re-registering Auto Read hotkey: {e}")
@@ -2986,7 +3057,7 @@ class GameTextReader:
             except ValueError:
                 pass
 
-        self.speak_text(filtered_text)
+        self.speak_text(filtered_text, voice_var.get(), speed_var.get())
 
     def show_history(self, area_name):
         """Display the history of read texts for the specified area in a new window with enhanced features."""
@@ -3218,6 +3289,67 @@ class GameTextReader:
             return False
 
         return True
+
+    def _process_tts_queue(self):
+        try:
+            while not self.tts_queue.empty():
+                command, data = self.tts_queue.get_nowait()
+                if command == "SPEAK":
+                    text, voice_name, speed = data
+                    if self.is_speaking:
+                        try:
+                            self.speaker.Speak("", 2)  # Purge before speaking new text
+                        except Exception as e:
+                            print(f"Error purging speech: {e}")
+                            self.reinit_speaker()
+                    if not self.speaker:
+                        print("Cannot speak, TTS speaker is not available.")
+                        continue
+                    try:
+                        self.speaker.Resume()
+                        if voice_name != "Select Voice":
+                            for voice in self.speaker.GetVoices():
+                                if voice.GetDescription() == voice_name:
+                                    self.speaker.Voice = voice
+                                    break
+                        self.speaker.Rate = (int(speed) - 100) // 10
+                        self.speaker.Speak(text, 1)
+                        self.is_speaking = True
+                        print(f"Speech started via queue for: \"{text[:30]}...\"")
+                    except Exception as e:
+                        print(f"Error processing SPEAK command: {e}")
+                        self.is_speaking = False
+                        self.reinit_speaker()
+                elif command == "STOP":
+                    if self.speaker:
+                        try:
+                            self.speaker.Pause()
+                            self.speaker.Speak("", 2)
+                            print("Windows TTS speech stopped successfully.")
+                        except Exception as e:
+                            print(f"Error stopping speech: {e}")
+                            self.reinit_speaker()
+                    self.is_speaking = False
+                    while not self.tts_queue.empty():
+                        try:
+                            self.tts_queue.get_nowait()
+                        except queue.Empty:
+                            break
+        except queue.Empty:
+            pass
+        finally:
+            self.root.after(100, self._process_tts_queue)
+
+    def reinit_speaker(self):
+        print("Attempting to re-initialize the Windows TTS speaker...")
+        try:
+            self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
+            self.speaker.Volume = int(self.volume.get())
+            self.is_speaking = False
+            print("Speaker re-initialized successfully.")
+        except Exception as e:
+            print(f"FATAL: Failed to re-initialize speaker: {e}")
+            self.speaker = None
 
     def show_processing_feedback(self, area_name):
         """Display temporary processing feedback for the specified area."""
