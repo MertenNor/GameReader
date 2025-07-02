@@ -2158,6 +2158,12 @@ class GameTextReader:
             display_name = self.get_display_name(hotkey)
             button.config(text=f"Set Hotkey: [ {display_name} ]")
             self.setup_hotkey(button, area_frame)
+            # Stop countdown
+            if hasattr(button, 'countdown_timer'):
+                self.root.after_cancel(button.countdown_timer)
+                delattr(button, 'countdown_timer')
+            if hasattr(button, 'countdown_remaining'):
+                delattr(button, 'countdown_remaining')
             self.setting_hotkey = False
             if hasattr(button, 'keyboard_hook_temp'):
                 keyboard.unhook(button.keyboard_hook_temp)
@@ -2192,37 +2198,33 @@ class GameTextReader:
         self.setting_hotkey = True
         button.keyboard_hook_temp = keyboard.on_press(on_key_press)
         button.mouse_hook_temp = mouse.hook(on_mouse_click)
+        button.countdown_remaining = 10
+        button.config(text=f"Press key ({button.countdown_remaining}s)")
 
         # Set 3-second timeout for hotkey setting
-        def unhook_mouse():
-            try:
-                if hasattr(button, 'mouse_hook_temp') and button.mouse_hook_temp is not None:
-                    try:
-                        if button.mouse_hook_temp in mouse._listener.codes_to_funcs.get(0, []):
-                            mouse.unhook(button.mouse_hook_temp)
-                    except Exception as e:
-                        print(f"Warning: Error unhooking mouse: {e}")
-                    finally:
-                        if hasattr(button, 'mouse_hook_temp'):
-                            delattr(button, 'mouse_hook_temp')
-                if hasattr(button, 'keyboard_hook_temp') and button.keyboard_hook_temp is not None:
-                    try:
-                        if hasattr(keyboard, '_listener') and hasattr(keyboard._listener, 'running') and keyboard._listener.running:
-                            keyboard.unhook(button.keyboard_hook_temp)
-                    except Exception as e:
-                        print(f"Warning: Error unhooking keyboard: {e}")
-                    finally:
-                        if hasattr(button, 'keyboard_hook_temp'):
-                            delattr(button, 'keyboard_hook_temp')
+        def update_countdown():
+            if not self.setting_hotkey or not hasattr(button, 'countdown_remaining') or button.countdown_remaining <= 0:
+                return
+            button.countdown_remaining -= 1
+            if button.countdown_remaining > 0:
+                button.config(text=f"Press key ({button.countdown_remaining}s)")
+                button.countdown_timer = self.root.after(1000, update_countdown)
+            else:
+                # Time's up, cancel hotkey setting
+                button.config(text="Set Hotkey")
                 self.setting_hotkey = False
                 self._hotkey_assignment_cancelled = True
-                if not hasattr(button, 'hotkey'):
-                    button.config(text="Set Hotkey")
-            except Exception as e:
-                print(f"Warning: Error during hook cleanup: {e}")
-                button.config(text="Set Hotkey")
+                # Unhook temporary hooks
+                if hasattr(button, 'keyboard_hook_temp'):
+                    keyboard.unhook(button.keyboard_hook_temp)
+                    delattr(button, 'keyboard_hook_temp')
+                if hasattr(button, 'mouse_hook_temp'):
+                    mouse.unhook(button.mouse_hook_temp)
+                    delattr(button, 'mouse_hook_temp')
+                # Restore all hotkeys
+                finish_hotkey_assignment()
 
-        self.root.after(3000, unhook_mouse)
+        button.countdown_timer = self.root.after(1000, update_countdown)
 
     def _update_status(self, message, duration=2000):
         """Update the status label with a message and clear it after a duration."""
@@ -2716,10 +2718,10 @@ class GameTextReader:
                 mouse_button = parts[-1][6:]  # 'button1', 'button2', etc.
 
                 def on_mouse_event(event):
-                        if isinstance(event, mouse.ButtonEvent) and event.event_type == mouse.DOWN:
-                            pressed_modifiers = [mod for mod in self.ALL_MODIFIERS if keyboard.is_pressed(mod)]
-                            if event.button == mouse_button and pressed_modifiers == modifiers:
-                                handle_hotkey_action()
+                    if isinstance(event, mouse.ButtonEvent) and event.event_type == mouse.DOWN:
+                        pressed_modifiers = [mod for mod in self.ALL_MODIFIERS if keyboard.is_pressed(mod)]
+                        if event.button == mouse_button and pressed_modifiers == modifiers:
+                            handle_hotkey_action()
 
                 button.mouse_hook = mouse.hook(on_mouse_event)
                 print(f"Mouse hook set up for {button.hotkey}")
