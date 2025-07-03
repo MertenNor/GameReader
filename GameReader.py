@@ -1374,7 +1374,7 @@ class GameTextReader:
         # Restore hotkeys on window close
         def on_info_close():
             for area in self.areas:
-                area_frame, hotkey_button, _, area_name_var, _, _, _ = area
+                area_frame, hotkey_button, *rest = area
                 if hasattr(hotkey_button, 'hotkey'):
                     self.setup_hotkey(hotkey_button, area_frame)
             if hasattr(self, 'stop_hotkey_button') and hasattr(self.stop_hotkey_button, 'mock_button'):
