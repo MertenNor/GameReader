@@ -129,7 +129,7 @@ def restore_all_hotkeys(self):
     try:
         # Restore hotkeys for each area
         for area in self.areas:
-            hotkey_button = area[1]
+            area_frame, hotkey_button, *rest = area
             if hasattr(hotkey_button, 'hotkey'):
                 try:
                     self.setup_hotkey(hotkey_button, area[0])
@@ -968,6 +968,7 @@ class GameTextReader:
 
         self.setup_gui()
         self.voices = self.engine.getProperty('voices') if self.engine else []
+        self.current_voices = self.voices
 
         self.stop_keyboard_hook = None
         self.stop_mouse_hook = None
@@ -1037,6 +1038,9 @@ class GameTextReader:
                 else:
                     engine_class = getattr(RealtimeTTS, engine_name)
                     engine = engine_class()
+
+                if voice != "Select Voice":
+                    engine.set_voice(voice)
 
                 # Handle interrupt or ongoing speech
                 if getattr(self, 'interrupt_on_new_scan_var', None) and self.interrupt_on_new_scan_var.get():
@@ -1127,6 +1131,7 @@ class GameTextReader:
         self.realtimetts_engine_label = tk.Label(tts_frame, text="RealtimeTTS Engine:")
         self.realtimetts_engine_combobox = ttk.Combobox(tts_frame, textvariable=self.realtimetts_engine_var, 
                                                         values=self.available_realtimetts_engines, state='readonly')
+        self.realtimetts_engine_combobox.bind('<<ComboboxSelected>>', self.on_realtimetts_engine_selected)
         self.realtimetts_engine_label.pack_forget()
         self.realtimetts_engine_combobox.pack_forget()
 
@@ -1243,7 +1248,6 @@ class GameTextReader:
         print("GUI setup complete.")
 
     def on_tts_engine_selected(self, event):
-        """Handle TTS engine selection change."""
         selected = self.tts_engine_var.get()
         if selected == "RealtimeTTS":
             self.realtimetts_engine_label.pack(side='left', padx=(10, 0))
@@ -1251,6 +1255,58 @@ class GameTextReader:
         else:
             self.realtimetts_engine_label.pack_forget()
             self.realtimetts_engine_combobox.pack_forget()
+        self.update_current_voices()
+        self.update_voice_dropdowns()
+
+    def on_realtimetts_engine_selected(self, event):
+        self.update_current_voices()
+        self.update_voice_dropdowns()
+
+    def update_current_voices(self):
+        if self.tts_engine_var.get() == "Windows TTS":
+            self.current_voices = self.voices
+        elif self.tts_engine_var.get() == "RealtimeTTS":
+            engine_name = self.realtimetts_engine_var.get()
+            if engine_name:
+                try:
+                    import RealtimeTTS
+                    if engine_name == "AzureEngine":
+                        speech_key = os.environ.get("AZURE_SPEECH_KEY")
+                        region = os.environ.get("AZURE_SPEECH_REGION")
+                        if not speech_key or not region:
+                            raise ValueError("AZURE_SPEECH_KEY and AZURE_SPEECH_REGION must be set.")
+                        engine = RealtimeTTS.AzureEngine(speech_key, region)
+                    elif engine_name == "ElevenlabsEngine":
+                        api_key = os.environ.get("ELEVENLABS_API_KEY")
+                        if not api_key:
+                            raise ValueError("ELEVENLABS_API_KEY must be set.")
+                        engine = RealtimeTTS.ElevenlabsEngine(api_key)
+                    elif engine_name == "OpenAIEngine":
+                        engine = RealtimeTTS.OpenAIEngine()
+                    else:
+                        engine_class = getattr(RealtimeTTS, engine_name)
+                        engine = engine_class()
+                    self.current_voices = engine.get_voices()
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to get voices for {engine_name}: {str(e)}")
+                    self.current_voices = []
+            else:
+                self.current_voices = []
+        else:
+            self.current_voices = []
+
+    def update_voice_dropdowns(self):
+        for area in self.areas:
+            _, _, _, _, _, voice_var, _, voice_menu = area
+            voice_menu['menu'].delete(0, 'end')
+            if self.current_voices:
+                voice_menu['menu'].add_command(label="Select Voice", command=lambda: voice_var.set("Select Voice"))
+                for voice in self.current_voices:
+                    voice_menu['menu'].add_command(label=voice.name, command=lambda v=voice.name: voice_var.set(v))
+                voice_var.set("Select Voice")
+            else:
+                voice_menu['menu'].add_command(label="No voices available", command=lambda: voice_var.set("No voices available"))
+                voice_var.set("No voices available")
 
     def create_checkbox(self, parent, text, variable, side='top', padx=0, pady=2):
         """Helper method to create and return a checkbox with a label.
@@ -1793,7 +1849,7 @@ class GameTextReader:
 
         # Voice selection
         voice_var = tk.StringVar(value="Select Voice")
-        voice_menu = tk.OptionMenu(area_frame, voice_var, "Select Voice", *[voice.name for voice in self.voices])
+        voice_menu = tk.OptionMenu(area_frame, voice_var, "Select Voice", *[voice.name for voice in self.current_voices])
         voice_menu.pack(side="left")
         tk.Label(area_frame, text=" ⏐ ").pack(side="left")  # Separator
 
@@ -1851,7 +1907,7 @@ class GameTextReader:
             save_button = tk.Button(area_frame, text="Save", command=save_auto_read_settings)
             save_button.pack(side="left")
 
-        self.areas.append((area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var))
+        self.areas.append((area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var, voice_menu))
         print("Added new read area.\n--------------------------")
         
         # Bind resize events to widgets
@@ -2127,7 +2183,7 @@ class GameTextReader:
             delattr(self, 'saved_mouse_hooks')
         
         for area in self.areas:
-            area_frame, hotkey_button, _, _, _, _, _ = area
+            area_frame, hotkey_button, *rest = area
             if hasattr(hotkey_button, 'hotkey'):
                 try:
                     self.setup_hotkey(hotkey_button, area_frame)
@@ -2349,7 +2405,7 @@ class GameTextReader:
         }
 
         # Populate areas list, excluding "Auto Read"
-        for area_frame, hotkey_button, _, area_name_var, preprocess_var, voice_var, speed_var in self.areas:
+        for area_frame, hotkey_button, _, area_name_var, preprocess_var, voice_var, speed_var, _ in self.areas:
             if area_name_var.get() == "Auto Read":
                 continue
             if hasattr(area_frame, 'area_coords'):
@@ -2901,7 +2957,7 @@ class GameTextReader:
         if not area_info:
             print(f"Error: Could not determine area name for frame {area_frame}")
             return
-        _, _, _, area_name_var, preprocess_var, voice_var, speed_var = area_info
+        _, _, _, area_name_var, preprocess_var, voice_var, speed_var, _ = area_info
         area_name = area_name_var.get()
         self.latest_area_name.set(area_name)
         preprocess = preprocess_var.get()
