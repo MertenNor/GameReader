@@ -128,7 +128,7 @@ def restore_all_hotkeys(self):
     """
     try:
         # Restore hotkeys for each area
-        for area in self.areas:
+        for area_frame, hotkey_button, *rest in self.areas:
             area_frame, hotkey_button, *rest = area
             if hasattr(hotkey_button, 'hotkey'):
                 try:
@@ -622,7 +622,7 @@ class ImageProcessingWindow:
 
         self.game_text_reader.processing_settings[self.area_name] = self.settings.copy()
 
-        for area_frame, _, _, area_name_var, preprocess_var, _, _ in self.game_text_reader.areas:
+        for area_frame, _, _, area_name_var, preprocess_var, *rest in self.game_text_reader.areas:
             if area_name_var.get() == self.area_name:
                 preprocess_var.set(True)
                 break
@@ -641,13 +641,13 @@ class ImageProcessingWindow:
         voice = None
         speed = None
         hotkey = None
-        for area_frame, _, _, area_name_var, preprocess_var, voice_var, speed_var in self.game_text_reader.areas:
+        for area_frame, _, _, area_name_var, preprocess_var, voice_var, speed_var, *rest in self.game_text_reader.areas:
             if area_name_var.get() == self.area_name:
                 preprocess = preprocess_var.get() if hasattr(preprocess_var, 'get') else preprocess_var
                 voice = voice_var.get() if hasattr(voice_var, 'get') else voice_var
                 speed = speed_var.get() if hasattr(speed_var, 'get') else speed_var
                 break
-        for area_frame, hotkey_button, _, area_name_var, _, _, _ in self.game_text_reader.areas:
+        for area_frame, hotkey_button, _, area_name_var, *rest in self.game_text_reader.areas:
             if area_name_var.get() == self.area_name:
                 hotkey = getattr(hotkey_button, 'hotkey', None)
                 break
@@ -1668,7 +1668,7 @@ class GameTextReader:
             hotkey = '+'.join(pressed_modifiers + [key_name])
 
             # Check for duplicate hotkeys
-            for area_frame, hotkey_button, _, area_name_var, _, _, _ in self.areas:
+            for area_frame, hotkey_button, _, area_name_var, *rest in self.areas:
                 if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey == hotkey:
                     show_thinkr_warning(self, area_name_var.get())
                     self._hotkey_assignment_cancelled = True
@@ -2672,7 +2672,7 @@ class GameTextReader:
     def _load_area(self, area_info):
         """Load a single area from layout data"""
         self.add_read_area(removable=True, editable_name=True, area_name=area_info["name"])
-        area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var = self.areas[-1]
+        area_frame, hotkey_button, set_area_button, area_name_var, preprocess_var, voice_var, speed_var, _ = self.areas[-1]
         
         area_frame.area_coords = area_info["coords"]
         if area_info["hotkey"]:
@@ -2957,7 +2957,7 @@ class GameTextReader:
         if not area_info:
             print(f"Error: Could not determine area name for frame {area_frame}")
             return
-        _, _, _, area_name_var, preprocess_var, voice_var, speed_var, _ = area_info
+        _, _, _, area_name_var, preprocess_var, voice_var, speed_var, *rest = area_info
         area_name = area_name_var.get()
         self.latest_area_name.set(area_name)
         preprocess = preprocess_var.get()
