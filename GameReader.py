@@ -3430,41 +3430,56 @@ def open_url(url):
 
 def capture_screen_area(x1, y1, x2, y2):
     """Capture screen area across multiple monitors using win32api"""
-    import win32gui
-    import win32ui
-    import win32con
-    from PIL import ImageGrab
-    return ImageGrab.grab(bbox=(x1, y1, x2, y2))
-    
+    # Get virtual screen bounds
+    min_x = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)  # Leftmost x (can be negative)
+    min_y = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)  # Topmost y (can be negative)
+    total_width = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
+    total_height = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
+    max_x = min_x + total_width
+    max_y = min_y + total_height
+
+    # Clamp coordinates to virtual screen bounds
+    x1 = max(min_x, min(max_x, x1))
+    y1 = max(min_y, min(max_y, y1))
+    x2 = max(min_x, min(max_x, x2))
+    y2 = max(min_y, min(max_y, y2))
+
+    # Ensure valid area (swap if necessary and check size)
+    x1, x2 = min(x1, x2), max(x1, x2)
+    y1, y2 = min(y1, y2), max(y1, y2)
+    width = x2 - x1
+    height = y2 - y1
+    if width <= 0 or height <= 0:
+        return Image.new('RGB', (1, 1))  # Return a blank 1x1 image for invalid areas
+
     # Get DC from entire virtual screen
     hwin = win32gui.GetDesktopWindow()
     hwindc = win32gui.GetWindowDC(hwin)
     srcdc = win32ui.CreateDCFromHandle(hwindc)
     memdc = srcdc.CreateCompatibleDC()
-    
-    # Create bitmap for entire capture area
-    width = x2 - x1
-    height = y2 - y1
+
+    # Create bitmap for capture area
     bmp = win32ui.CreateBitmap()
     bmp.CreateCompatibleBitmap(srcdc, width, height)
     memdc.SelectObject(bmp)
-    
+
     # Copy screen into bitmap
     memdc.BitBlt((0, 0), (width, height), srcdc, (x1, y1), win32con.SRCCOPY)
-    
+
     # Convert bitmap to PIL Image
     bmpinfo = bmp.GetInfo()
     bmpstr = bmp.GetBitmapBits(True)
     img = Image.frombuffer(
         'RGB',
         (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
-        bmpstr, 'raw', 'BGRX', 0, 1)
-    
+        bmpstr, 'raw', 'BGRX', 0, 1
+    )
+
     # Clean up
     memdc.DeleteDC()
     win32gui.ReleaseDC(hwin, hwindc)
     win32gui.DeleteObject(bmp.GetHandle())
-    
+
     return img
 
 if __name__ == "__main__":
