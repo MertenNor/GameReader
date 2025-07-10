@@ -2597,7 +2597,7 @@ class GameTextReader:
         self._has_unsaved_changes = False
 
         # Validate coordinates for all areas except "Auto Read"
-        for area_frame, _, _, area_name_var, _, _, _ in self.areas:
+        for area_frame, hotkey_button, _, area_name_var, preprocess_var, voice_var, speed_var, _ in self.areas:
             if area_name_var.get() != "Auto Read" and not hasattr(area_frame, 'area_coords'):
                 messagebox.showerror("Error", f"Area '{area_name_var.get()}' does not have a defined area, remove it or configure before saving.")
                 return
