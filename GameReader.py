@@ -1361,8 +1361,12 @@ class GameTextReader:
     def show_info(self):
         # Create Tkinter window with a modern look
         info_window = tk.Toplevel(self.root)
+        style = ttk.Style()
+        style.configure('TNotebook.Tab', font=('Helvetica', 14), padding=[10, 5])
         info_window.title("GameReader - Information")
         info_window.geometry("900x600")
+        info_window.resizable(True, True)
+        info_window.configure(bg='#f0f0f0')
 
         # Disable hotkeys to prevent interference
         try:
@@ -1390,15 +1394,34 @@ class GameTextReader:
         except:
             pass
 
-        # Main frame with padding
-        main_frame = ttk.Frame(info_window, padding="20 20 20 10")
+        # Main frame with padding and background
+        main_frame = ttk.Frame(info_window, padding="20", style='Custom.TFrame')
+        style.configure('Custom.TFrame', background='#f0f0f0')
         main_frame.pack(fill='both', expand=True)
 
-        # Build sections using helper functions
-        self.build_title_section(main_frame)
-        self.build_credits_section(main_frame)
-        self.build_tesseract_warning(main_frame)
-        self.build_content_text(main_frame)
+        # Create notebook for tabs above the content
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill='both', expand=True, pady=10)
+
+        # About tab
+        about_frame = ttk.Frame(notebook)
+        notebook.add(about_frame, text="About")
+        self.build_about_section(about_frame)
+
+        # Instructions tab
+        instructions_frame = ttk.Frame(notebook)
+        notebook.add(instructions_frame, text="Instructions")
+        self.build_content_text(instructions_frame)
+
+        # Add close button at the bottom with styling
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill='x', pady=(10, 0))
+        close_button = ttk.Button(bottom_frame, text="Close", command=info_window.destroy, style='Custom.TButton')
+        style.configure('Custom.TButton', font=('Helvetica', 10, 'bold'))
+        close_button.pack(side='right')
+        close_button.bind("<Enter>", lambda e: close_button.config(style='Hover.TButton'))
+        close_button.bind("<Leave>", lambda e: close_button.config(style='Custom.TButton'))
+        style.configure('Hover.TButton', font=('Helvetica', 10, 'bold'), background='#d0d0d0')
 
         # Make window modal
         info_window.transient(self.root)
@@ -1420,83 +1443,243 @@ class GameTextReader:
         return title_frame
 
     # Credits and links section
-    def build_credits_section(self, parent):
-        credits_frame = ttk.Frame(parent)
-        credits_frame.pack(fill='x', pady=(0, 20))
-
-        # Program Information
-        ttk.Label(credits_frame, text="Program Information", font=("Helvetica", 11, "bold")).pack(anchor='w')
-        ttk.Label(credits_frame, text="Designer: MertenNor", font=("Helvetica", 10)).pack(anchor='w')
-        coder_frame = ttk.Frame(credits_frame)
-        coder_frame.pack(anchor='w')
-        ttk.Label(coder_frame, text="Coder: Different AI's via ", font=("Helvetica", 10)).pack(side='left')
-        self.create_clickable_label(coder_frame, "Cursor", "https://www.cursor.com/").pack(side='left')
-        ttk.Label(coder_frame, text=" and ", font=("Helvetica", 10)).pack(side='left')
-        self.create_clickable_label(coder_frame, "Windsurf", "https://windsurf.com/").pack(side='left')
-
-        # Official Links
-        ttk.Label(credits_frame, text="Official Links", font=("Helvetica", 11, "bold")).pack(anchor='w', pady=(10, 0))
-        github_frame = ttk.Frame(credits_frame)
-        github_frame.pack(anchor='w')
-        ttk.Label(github_frame, text="GitHub: ", font=("Helvetica", 10, "bold")).pack(side='left')
-        self.create_clickable_label(github_frame, "GitHub.com/mertennor/gamereader", "https://github.com/MertenNor/GameReader").pack(side='left')
-
-        # Support & Feedback
-        ttk.Label(credits_frame, text="Support & Feedback", font=("Helvetica", 11, "bold")).pack(anchor='w', pady=(10, 0))
-        coffee_frame = ttk.Frame(credits_frame)
-        coffee_frame.pack(anchor='w')
-        ttk.Label(coffee_frame, text="Buy me a Coffee: ", font=("Helvetica", 10, "bold")).pack(side='left')
-        self.create_clickable_label(coffee_frame, "BuyMeaCoffee.com/mertennor ☕", "https://www.buymeacoffee.com/mertennor").pack(side='left')
-        feedback_frame = ttk.Frame(credits_frame)
-        feedback_frame.pack(anchor='w')
-        ttk.Label(feedback_frame, text="Want something added? Found bugs? Let me know!: via this Google Form: ", font=("Helvetica", 10, "bold")).pack(side='left')
-        self.create_clickable_label(feedback_frame, "Forms.Gle/8YBU8atkgwjyzdM79", "https://forms.gle/8YBU8atkgwjyzdM79").pack(side='left')
-
-        return credits_frame
+    def build_credits_section(self):
+        content = [
+            ("Program Information\n", 'bold'),
+            ("---\n", 'normal'),
+            ("Designer: MertenNor\n", 'normal'),
+            ("Coder: Various AIs via ", 'normal'),
+            ("Cursor", ('link', 'link_cursor')),
+            (" and ", 'normal'),
+            ("Windsurf", ('link', 'link_windsurf')),
+            ("\n\n", 'normal'),
+            ("Official Links\n", 'bold'),
+            ("---\n", 'normal'),
+            ("GitHub: ", 'bold'),
+            ("GitHub.com/mertennor/gamereader", ('link', 'link_github')),
+            ("\n\n", 'normal'),
+            ("Support & Feedback\n", 'bold'),
+            ("---\n", 'normal'),
+            ("Buy me a Coffee ☕: ", 'bold'),
+            ("BuyMeaCoffee.com/mertennor", ('link', 'link_coffee')),
+            ("\n", 'normal'),
+            ("Feedback: Want features or found bugs? Use this form: ", 'bold'),
+            ("Forms.Gle/8YBU8atkgwjyzdM79", ('link', 'link_form')),
+            ("\n\n", 'normal'),
+        ]
+        links = {
+            'link_cursor': "https://www.cursor.com/",
+            'link_windsurf': "https://windsurf.com/",
+            'link_github': "https://github.com/MertenNor/GameReader",
+            'link_coffee': "https://www.buymeacoffee.com/mertennor",
+            'link_form': "https://forms.gle/8YBU8atkgwjyzdM79",
+        }
+        return content, links
 
     # Tesseract warning section
-    def build_tesseract_warning(self, parent):
-        tesseract_frame = ttk.Frame(parent)
-        tesseract_frame.pack(fill='x', pady=(10, 0))
-        ttk.Label(tesseract_frame,
-                  text="! IMPORTANT ! This program requires Tesseract OCR to function ( default installation: C:\Program Files ) to process text in images.",
-                  font=("Helvetica", 10, "bold"),
-                  foreground='red').pack(anchor='w', pady=(0, 5))
-        download_row = ttk.Frame(tesseract_frame)
-        download_row.pack(anchor='w')
-        ttk.Label(download_row, text="Download the latest version here: ", font=("Helvetica", 10, "bold"), foreground='red').pack(side='left')
-        self.create_clickable_label(download_row, "www.github.com/tesseract-ocr/tesseract/releases", "https://github.com/tesseract-ocr/tesseract/releases", foreground='blue').pack(side='left')
-        ttk.Label(tesseract_frame, text="( yes, you need this if you want this program to read the text for you. )", font=("Helvetica", 11, "bold"), foreground='red').pack(anchor='w', pady=(2, 6))
-        return tesseract_frame
+    def build_tesseract_warning(self):
+        content = [
+            ("⚠ IMPORTANT NOTICE\n", ('bold', 'red')),
+            ("This program requires Tesseract OCR to function properly.\n", ('bold', 'red')),
+            ("Default installation path: C:\\Program Files\n", ('bold', 'red')),
+            ("Download the latest version here:\n", ('bold', 'red')),
+            ("www.github.com/tesseract-ocr/tesseract/releases", ('link', 'link_tesseract')),
+            ("\n", 'normal'),
+            ("Note: Tesseract OCR is essential for text recognition.\n\n", ('bold', 'red')),
+        ]
+        links = {
+            'link_tesseract': "https://github.com/tesseract-ocr/tesseract/releases",
+        }
+        return content, links
+
+    def build_about_section(self, parent):
+        # Create text widget with scrollbar
+        text_frame = ttk.Frame(parent)
+        text_frame.pack(fill='both', expand=True)
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side='right', fill='y')
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=("Helvetica", 10))
+        text_widget.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=text_widget.yview)
+        
+        # Define tags
+        text_widget.tag_configure('title', font=("Helvetica", 16, "bold"), justify='center')
+        text_widget.tag_configure('normal', justify='left')
+        text_widget.tag_configure('bold', font=("Helvetica", 10, "bold"))
+        text_widget.tag_configure('red', foreground='red')
+        text_widget.tag_configure('link', foreground='blue', underline=True)
+        text_widget.tag_configure('toc_header', font=("Helvetica", 12, "bold"))
+        
+        # Insert title
+        text_widget.insert('end', f"GameReader v{APP_VERSION}\n", 'title')
+        # Set mark after title
+        text_widget.mark_set('after_title', 'end')
+        text_widget.mark_gravity('after_title', 'left')
+        # Insert description
+        description = "GameReader is a tool designed to read text from game screens and convert it to speech, making games more accessible.\n\n"
+        text_widget.insert('end', description, 'normal')
+        
+        # Insert content with marks for headers
+        credits_content, credits_links = self.build_credits_section()
+        tesseract_content, tesseract_links = self.build_tesseract_warning()
+        all_content = credits_content + tesseract_content
+        all_links = {**credits_links, **tesseract_links}
+        headers = []
+        for i, (text, tags) in enumerate(all_content):
+            if isinstance(tags, tuple) and 'bold' in tags or tags == 'bold':
+                mark_name = f"about_header_{i}"
+                text_widget.mark_set(mark_name, 'end')
+                text_widget.mark_gravity(mark_name, 'left')
+                headers.append((text.strip(), mark_name))
+                print(f"Set mark {mark_name} at position {text_widget.index(mark_name)}")  # Debug mark position
+            text_widget.insert('end', text, tags)
+        
+        # Bind events for content links
+        def on_link_click(event):
+            index = text_widget.index(f"@{event.x},{event.y}")
+            tags = text_widget.tag_names(index)
+            for tag in tags:
+                if tag in all_links:
+                    open_url(all_links[tag])
+                    break
+        text_widget.bind("<Button-1>", on_link_click)
+        
+        # Change cursor on hover for content links
+        for link_tag in all_links.keys():
+            text_widget.tag_bind(link_tag, "<Enter>", lambda e: text_widget.config(cursor="hand2"))
+            text_widget.tag_bind(link_tag, "<Leave>", lambda e: text_widget.config(cursor=""))
+        
+        # Make text read-only
+        text_widget.config(state='disabled')
 
     # Content text section (scrollable)
     def build_content_text(self, parent):
-        # Create main content frame
+        # Main content frame
         content_frame = ttk.Frame(parent)
         content_frame.pack(fill='both', expand=True)
-        
-        # Create and configure text widget with scrollbar
-        text_widget, scrollbar = self._create_text_widget(content_frame)
-        
-        # Insert instructional text
-        self._insert_info_text(text_widget)
-        
-        # Add context menu for copy/select functionality
+
+        # TOC frame on the left
+        toc_frame = ttk.Frame(content_frame, width=200)
+        toc_frame.pack(side='left', fill='y')
+        toc_listbox = tk.Listbox(toc_frame, width=30, font=("Helvetica", 10))
+        toc_listbox.pack(fill='both', expand=True)
+
+        # Text frame on the right
+        text_frame = ttk.Frame(content_frame)
+        text_frame.pack(side='right', fill='both', expand=True, padx=10, pady=10)
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side='right', fill='y')
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=("Helvetica", 10))
+        text_widget.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=text_widget.yview)
+
+        # Define tags
+        text_widget.tag_configure('bold', font=("Helvetica", 10, "bold"))
+
+        # Insert instructional text and collect headers
+        headers = []
+        info_text = [
+            ("How to Use the Program\n", 'bold'),
+            ("═══════════════════════════════\n", None),
+            ("• Click \"Set Area\": Left-click and drag to select the area you want the program to read. (Area name can be change with right-click)\n\n", None),
+            ("• Click \"Set Hotkey\": Assign a hotkey for the selected area.\n\n", None),
+            ("• Click \"Select Voice\": Choose a voice from the dropdown menu.\n\n", None),
+            ("• Press the assigned area hotkey to make the program automatically read the text aloud.\n\n", None),
+            ("• Use the stop hotkey (if set) to stop the current reading.\n\n", None),
+            ("• Adjust the program volume by setting the volume percentage in the main window.\n\n", None),
+            ("• The debug console displays the processed image of the last area read and its debug logs.\n\n", None),
+            ("• Make sure to save your loadout once you are happy with your setup.\n\n\n", None),
+            ("BUTTONS AND FEATURES\n", 'bold'),
+            ("═════════════════════\n\n", None),
+            ("Auto Read\n", 'bold'),
+            ("------------------------\n", None),
+            ("When assigned a hotkey, the program will automatically read the text in the selected area.\n", None),
+            ("The Save button here will save the settings for the AutoRead area only.\n", None),
+            ("Note! This works best with applications in windowed borderless mode.\n", None),
+            ("This save file can be found here: C:\\Users\\<username>\\AppData\\Local\\Temp\nFilename: auto_read_settings.json.\n", None),
+            ("Alternatively, you can locate this save file by clicking the 'Program Saves...' button.\n", None),
+            ("The checkbox 'Stop Read on Select' determines the behavior when scanning a new area while text is being read.\n", None),
+            ("If checked, the ongoing text will stop immediately, and the newly scanned text will be read.\n", None),
+            ("If unchecked, the newly scanned text will be added to a queue and read after the ongoing text finishes.\n\n", None),
+            ("Add Read Area\n", 'bold'),
+            ("------------------------\n", None),
+            ("Creates a new area for text capture. You can define multiple areas on screen for different text sources.\n\n", None),
+            ("Image Processing\n", 'bold'),
+            ("------------------------------\n", None),
+            ("Allows customization of image preprocessing before speaking. Useful for improving text recognition in difficult-to-read areas.\n\n", None),
+            ("Debug window\n", 'bold'),
+            ("---------------------------\n", None),
+            ("Shows the captured text and processed images for troubleshooting.\n\n", None),
+            ("Stop Hotkey\n", 'bold'),
+            ("--------------------\n", None),
+            ("Immediately stops any ongoing speech.\n\n", None),
+            ("Ignored Word List\n", 'bold'),
+            ("-------------------------\n", None),
+            ("A list of words, phrases, or sentences (separated by commas) to ignore while reading text. Example: Chocolate, Apple, Banana, I love ice cream\n", None),
+            ("These will then be ignored in all areas.\n\n", None),
+            ("CHECKBOX OPTIONS\n", 'bold'),
+            ("════════════════\n\n", None),
+            ("Ignore usernames *EXPERIMENTAL*\n", 'bold'),
+            ("--------------------------------\n", None),
+            ("This option filters out usernames from the text before reading. It looks for patterns like \"Username:\" at the start of lines.\n\n", None),
+            ("Ignore previous spoken words\n", 'bold'),
+            ("-------------------------------------------------\n", None),
+            ("This prevents the same text from being read multiple times. Useful for chat windows where messages might persist.\n\n", None),
+            ("Ignore gibberish *EXPERIMENTAL*\n", 'bold'),
+            ("-------------------------------------------------------\n", None),
+            ("Filters out text that appears to be random characters or rendered artifacts. Helps prevent reading of non-meaningful text.\n\n", None),
+            ("Pause at punctuation *EXPERIMENTAL*\n", 'bold'),
+            ("------------------------------------\n", None),
+            ("Adds natural pauses when encountering periods, commas, and other punctuation marks. Makes the speech sound more natural.\n\n", None),
+            ("Fullscreen mode *EXPERIMENTAL*\n", 'bold'),
+            ("--------------------------------------------------------\n", None),
+            ("Feature for capturing text from fullscreen applications. May cause brief screen flicker during capture for the program to take an updated screenshot.\n\n", None),
+            ("TIPS AND TRICKS\n", 'bold'),
+            ("═════════════\n\n", None),
+            ("• Use image processing for areas with difficult-to-read text\n\n", None),
+            ("• Create two identical areas with different hotkeys: assign one a male voice and the other a female voice.\n", None),
+            ("  This lets you easily switch between male and female voices for text, ideal for game dialogue.\n\n", None),
+            ("• Experiment with different preprocessing settings for optimal text recognition in your specific use case.\n\n", None),
+            ("• Want more Voices? Add them in Windows.\n", None),
+            ("  For Windows 10: Go to Settings > Time & Language > Speech > Manage voices, then click 'Add voices' to install new ones.\n", None),
+            ("  For Windows 11: Go to Settings > Accessibility > Speech > Manage voices, then click 'Add voices' to install new ones.\n", None),
+            ("  You can also find other Narrator voices online that you can add to Windows.\n", None),
+        ]
+
+        headers = []
+        for i, (text, tag) in enumerate(info_text):
+            if tag == 'bold':
+                header_tag = f"header_{i}"
+                text_widget.insert('end', text, ('bold', header_tag))
+                headers.append((text.strip(), header_tag))
+            else:
+                text_widget.insert('end', text, tag)
+
+        # Populate TOC listbox
+        for header, _ in headers:
+            toc_listbox.insert('end', header)
+
+        # Bind TOC selection
+        def on_toc_select(event):
+            selection = toc_listbox.curselection()
+            if selection:
+                index = selection[0]
+                _, header_tag = headers[index]
+                ranges = text_widget.tag_ranges(header_tag)
+                if ranges:
+                    start_index = ranges[0]
+                    text_widget.update_idletasks()
+                    pixels = text_widget.tk.call(text_widget._w, 'count', '-ypixels', '1.0', start_index)
+                    total_pixels = text_widget.tk.call(text_widget._w, 'count', '-ypixels', '1.0', 'end')
+                    frac = float(pixels) / float(total_pixels) if total_pixels != '0' else 0.0
+                    text_widget.yview_moveto(frac)
+        toc_listbox.bind('<<ListboxSelect>>', on_toc_select)
+
+        # Add context menu
         self._add_context_menu(text_widget)
-        
-        # Make text read-only but selectable
+
+        # Make text read-only
         text_widget.config(state='disabled')
-        
-        # Add bottom frame with close button
-        bottom_frame = ttk.Frame(parent)
-        bottom_frame.pack(fill='x', pady=(20, 0))
-        close_button = ttk.Button(bottom_frame, 
-                                  text="Close",
-                                  command=parent.destroy,
-                                  width=10)
-        close_button.pack(side='right')
-        
-        return content_frame
 
     def _create_text_widget(self, parent):
         """Create and configure the text widget with scrollbar."""
@@ -1525,7 +1708,7 @@ class GameTextReader:
         return text_widget, scrollbar
 
     def _insert_info_text(self, text_widget):
-        """Insert instructional text into the text widget."""
+        """Insert instructional text into the text widget with a table of contents."""
         info_text = [
             ("How to Use the Program\n", 'bold'),
             ("═══════════════════════════════\n", None),
@@ -1594,8 +1777,39 @@ class GameTextReader:
             ("  You can also find other Narrator voices online that you can add to Windows.\n", None),
         ]
         
-        for text, tag in info_text:
+        # Insert content with marks for headers
+        headers = []
+        for i, (text, tag) in enumerate(info_text):
+            if tag == 'bold':
+                mark_name = f"header_{i}"
+                text_widget.mark_set(mark_name, 'end')
+                text_widget.mark_gravity(mark_name, 'left')
+                headers.append((text.strip(), mark_name))
             text_widget.insert('end', text, tag)
+        
+        # Insert TOC at the beginning
+        toc_lines = ["Table of Contents\n"] + [f"• {header_text}\n" for header_text, _ in headers] + ["\n═══════════════════════════════\n"]
+        toc_text = ''.join(toc_lines)
+        text_widget.insert('1.0', toc_text)
+        
+        # Add toc_header tag to "Table of Contents"
+        toc_header_start = '1.0'
+        toc_header_end = text_widget.index('1.0 lineend')
+        text_widget.tag_add('toc_header', toc_header_start, toc_header_end)
+        text_widget.tag_configure('toc_header', font=("Helvetica", 12, "bold"))
+        
+        # Add link tags to TOC entries
+        current_line = text_widget.index('2.0')  # Line after "Table of Contents"
+        for header_text, mark_name in headers:
+            link_tag = f"toc_link_{mark_name}"
+            line_start = current_line
+            line_end = text_widget.index(f"{line_start} lineend")
+            text_widget.tag_add(link_tag, line_start, line_end)
+            text_widget.tag_configure(link_tag, foreground='blue', underline=True)
+            text_widget.tag_bind(link_tag, '<Button-1>', lambda e, m=mark_name: text_widget.see(m))
+            text_widget.tag_bind(link_tag, '<Enter>', lambda e: text_widget.config(cursor='hand2'))
+            text_widget.tag_bind(link_tag, '<Leave>', lambda e: text_widget.config(cursor=''))
+            current_line = text_widget.index(f"{line_start} +1l")
         
         # Enable text selection even when disabled
         def enable_text_selection(event=None):
