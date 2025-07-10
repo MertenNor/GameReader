@@ -3356,7 +3356,7 @@ class GameTextReader:
         text_frame.pack(fill='both', expand=True, padx=10, pady=10)
 
         # Create the text widget and scrollbar inside the frame
-        text_widget = tk.Text(text_frame, wrap=tk.WORD, height=20, width=80)
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, height=20, width=80, selectbackground='#add8e6', selectforeground='black')
         scrollbar = tk.Scrollbar(text_frame, command=text_widget.yview)
 
         # Configure grid layout
@@ -3375,6 +3375,7 @@ class GameTextReader:
         text_widget.tag_configure('highlight', background='yellow', justify='left')
         text_widget.tag_configure('content', justify='left', lmargin1=10, lmargin2=10, rmargin=10)
         text_widget.tag_configure('hidden', elide=True)  # Tag to hide content
+        text_widget.tag_raise('sel', 'box')
 
         # Dictionary to store the start and end indices of each box
         box_indices = {}
