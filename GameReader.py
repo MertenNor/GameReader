@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -29,6 +30,75 @@ import win32gui
 import win32ui
 from PIL import Image, ImageEnhance, ImageFilter, ImageGrab, ImageTk
 import ctypes
+import winsound
+import asyncio
+import queue
+try:
+    # winsdk is the package name; modules generally import from winrt.*
+    import importlib
+    UWP_TTS_AVAILABLE = False
+    _uwp_import_error = None
+    try:
+        from winrt.windows.media.speechsynthesis import SpeechSynthesizer
+        from winrt.windows.storage.streams import DataReader
+        UWP_TTS_AVAILABLE = True
+    except Exception as e:
+        _uwp_import_error = e
+        try:
+            # Attempt to import winsdk meta package and retry
+            importlib.import_module('winsdk')
+            from winrt.windows.media.speechsynthesis import SpeechSynthesizer
+            from winrt.windows.storage.streams import DataReader
+            UWP_TTS_AVAILABLE = True
+            _uwp_import_error = None
+        except Exception as e2:
+            _uwp_import_error = e2
+            # As a last attempt, try alternate import path (rare)
+            try:
+                from winsdk.windows.media.speechsynthesis import SpeechSynthesizer  # type: ignore
+                from winsdk.windows.storage.streams import DataReader  # type: ignore
+                UWP_TTS_AVAILABLE = True
+                _uwp_import_error = None
+            except Exception as e3:
+                _uwp_import_error = e3
+except Exception as _e_init:
+    UWP_TTS_AVAILABLE = False
+    _uwp_import_error = _e_init
+
+def _ensure_uwp_available():
+    global UWP_TTS_AVAILABLE
+    if UWP_TTS_AVAILABLE:
+        return True
+    try:
+        import importlib
+        # Try both ways
+        try:
+            importlib.import_module('winsdk')
+        except Exception:
+            pass
+        try:
+            from winrt.windows.media.speechsynthesis import SpeechSynthesizer as _SS  # noqa: F401
+            from winrt.windows.storage.streams import DataReader as _DR  # noqa: F401
+            UWP_TTS_AVAILABLE = True
+        except Exception:
+            from winsdk.windows.media.speechsynthesis import SpeechSynthesizer as _SS  # type: ignore # noqa: F401
+            from winsdk.windows.storage.streams import DataReader as _DR  # type: ignore # noqa: F401
+            UWP_TTS_AVAILABLE = True
+    except Exception as e:
+        UWP_TTS_AVAILABLE = False
+        try:
+            print(f"UWP import error: {e}")
+        except Exception:
+            pass
+    return UWP_TTS_AVAILABLE
+
+# Try to import tkinterdnd2 for drag and drop functionality
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    TKDND_AVAILABLE = True
+except ImportError:
+    TKDND_AVAILABLE = False
+    print("Warning: tkinterdnd2 not available. Drag and drop functionality will be disabled.")
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)  # FIX DPI ON WINDOWS
@@ -37,14 +107,20 @@ except AttributeError:
 except Exception as e:
     print(f"Warning: Could not set DPI awareness: {e}")
 
-APP_VERSION = "0.8.4"
+APP_VERSION = "0.8.5"
 
 CHANGELOG = """
-- Multi-monitor support was broken, but it’s now fixed.
-  Sorry about the inconvenience.
-  
-  Please reach out if you find any other bugs or if there are any features you’d like to see added!
-  Check the info/help window for details on how to contact.
+- Fixed an issue where numpad hotkeys didn’t work in fullscreen mode for some users.
+- Properly added support for voices installed via Windows settings.
+- Updated the Info/Help window.
+- Made minor UI improvements.
+
+
+Thanks to everyone who has sent in feedback and bug reports!
+
+Note: Some users have requested to add AI Voices this will the next main priority.
+
+- Thanks for using GameReader!
  
 """
 
@@ -115,32 +191,6 @@ def show_thinkr_warning(game_reader, area_name):
     # Also patch the OK button and <Return> binding to use on_close
     btn.config(command=on_close)
     win.bind("<Return>", lambda e: on_close())
-
-def restore_all_hotkeys():
-    """
-    Restore all hotkeys for the application.
-    """
-    try:
-        # Restore keyboard hotkeys
-        for area in self.areas:
-            hotkey_button = area[1]
-            if hasattr(hotkey_button, 'hotkey'):
-                try:
-                    keyboard.add_hotkey(hotkey_button.hotkey, lambda: self.setup_hotkey(hotkey_button, area[0]))
-                except Exception as e:
-                    print(f"Warning: Error restoring keyboard hotkey: {e}")
-        
-        # Restore mouse hotkeys
-        for area in self.areas:
-            hotkey_button = area[1]
-            if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey.startswith('button'):
-                try:
-                    mouse.add_hotkey(hotkey_button.hotkey, lambda: self.setup_hotkey(hotkey_button, area[0]))
-                except Exception as e:
-                    print(f"Warning: Error restoring mouse hotkey: {e}")
-        
-    except Exception as e:
-        print(f"Warning: Error in restore_all_hotkeys: {e}")
 
 class ConsoleWindow:
     def __init__(self, root, log_buffer, layout_file_var, latest_images, latest_area_name_var):
@@ -932,7 +982,7 @@ class GameTextReader:
         FORCE_UPDATE_CHECK = False  # Set to True to force update popup, False for normal behavior
         threading.Thread(target=lambda: check_for_update(local_version, force=FORCE_UPDATE_CHECK), daemon=True).start()
         # --- End update check ---
-        self.root.geometry("1115x180")  # Initial window size (height reduced for less vertical tallness)
+        self.root.geometry("1115x260")  # Initial window size (height reduced for less vertical tallness)
         self.layout_file = tk.StringVar()
         self.latest_images = {}  # Use a dictionary to store images for each area
         self.latest_area_name = tk.StringVar()  # Ensure this is defined
@@ -953,6 +1003,7 @@ class GameTextReader:
         self.hotkeys = set()  # Track registered hotkeys
         self.is_speaking = False  # Flag to track if the engine is speaking
         self.processing_settings = {}  # Dictionary to store processing settings for each area
+        self.processing_settings_widgets = {}  # Dictionary to store processing settings widgets for each area
         self.volume = tk.StringVar(value="100")  # Default volume 100%
         self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
         self.speaker.Volume = int(self.volume.get())  # Set initial volume
@@ -994,6 +1045,27 @@ class GameTextReader:
             28: 'enter'  # Numpad Enter
         }
 
+        # VK codes for numpad keys, used for fullscreen fallback polling
+        # Reference: https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes
+        self.numpad_vk_codes = {
+            '0': 0x60,  # VK_NUMPAD0
+            '1': 0x61,  # VK_NUMPAD1
+            '2': 0x62,  # VK_NUMPAD2
+            '3': 0x63,  # VK_NUMPAD3
+            '4': 0x64,  # VK_NUMPAD4
+            '5': 0x65,  # VK_NUMPAD5
+            '6': 0x66,  # VK_NUMPAD6
+            '7': 0x67,  # VK_NUMPAD7
+            '8': 0x68,  # VK_NUMPAD8
+            '9': 0x69,  # VK_NUMPAD9
+            '*': 0x6A,  # VK_MULTIPLY
+            '+': 0x6B,  # VK_ADD
+            '-': 0x6D,  # VK_SUBTRACT
+            '.': 0x6E,  # VK_DECIMAL
+            '/': 0x6F,  # VK_DIVIDE
+            'enter': 0x0D  # VK_RETURN (cannot distinguish main vs numpad)
+        }
+
         self.text_histories = {}  # Dictionary to store text history for each area
         self.ignore_previous_var = tk.BooleanVar(value=False)  # Variable for the checkbox
         self.ignore_gibberish_var = tk.BooleanVar(value=False)  # Variable for the gibberish checkbox
@@ -1003,12 +1075,395 @@ class GameTextReader:
         self.better_unit_detection_var = tk.BooleanVar(value=False)
         # Add variable for read game units
         self.read_game_units_var = tk.BooleanVar(value=False)
+        
+        # Add variable for interrupt on new scan
+        self.interrupt_on_new_scan_var = tk.BooleanVar(value=True)
+
+        # UWP TTS concurrency control
+        self._uwp_lock = threading.Lock()
+        self._uwp_player = None
+        self._uwp_queue = queue.Queue()
+        self._uwp_thread_stop = threading.Event()
+        self._uwp_interrupt = threading.Event()
+        self._uwp_thread = threading.Thread(target=self._uwp_worker, daemon=True)
+        self._uwp_thread.start()
+
+        # Numpad fallback polling is always enabled when a numpad hotkey is set
 
         # Load game units from JSON file
         self.game_units = self.load_game_units()
 
         self.setup_gui()
-        self.voices = self.engine.getProperty('voices')  # Get available voices
+        # Get available voices using SAPI instead of pyttsx3
+        try:
+            # Research-based solution: Force Windows to load ALL installed voices
+            all_voices = []
+            # Disable heavy/side-effect discovery steps by default (no service restarts or PowerShell)
+            enable_heavy_discovery = False
+            
+            # Method 1: Enumerate SAPI voices (quiet)
+            try:
+                # Create a new SAPI object specifically for enumeration
+                enum_voice = win32com.client.Dispatch("SAPI.SpVoice")
+                
+                voices = enum_voice.GetVoices()
+                for i, voice in enumerate(voices):
+                    try:
+                        all_voices.append(voice)
+                    except Exception:
+                        pass
+                        
+            except Exception as e1:
+                print(f"Method 1 failed: {e1}")
+            
+
+            
+            # Method 2: Try to force Windows to register all voices (disabled by default to avoid console popups)
+            if enable_heavy_discovery:
+                try:
+                    import subprocess
+                    try:
+                        # Hide any console window
+                        si = subprocess.STARTUPINFO()
+                        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        creationflags = subprocess.CREATE_NO_WINDOW
+                        subprocess.run(['net', 'stop', 'audiosrv'], capture_output=True, startupinfo=si, creationflags=creationflags)
+                        subprocess.run(['net', 'start', 'audiosrv'], capture_output=True, startupinfo=si, creationflags=creationflags)
+                    except Exception:
+                        pass
+                    # Re-enumerate voices
+                    try:
+                        enum_voice2 = win32com.client.Dispatch("SAPI.SpVoice")
+                        voices2 = enum_voice2.GetVoices()
+                        for i, voice in enumerate(voices2):
+                            try:
+                                if not any(v.GetDescription() == voice.GetDescription() for v in all_voices):
+                                    all_voices.append(voice)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            
+            # Method 3: Check Speech_OneCore registry locations (quiet)
+            
+            # Method 3.5: Try to force Windows to register OneCore voices (quiet)
+            try:
+                # Try to create a voice object and enumerate with different filters
+                force_voice = win32com.client.Dispatch("SAPI.SpVoice")
+                # Try to get voices with different enumeration methods
+                try:
+                    # Try to enumerate with a filter that might include OneCore voices
+                    voices_force = force_voice.GetVoices("", "")
+                    for i in range(voices_force.Count):
+                        try:
+                            voice = voices_force.Item(i)
+                            if not any(v.GetDescription() == voice.GetDescription() for v in all_voices):
+                                all_voices.append(voice)
+                        except Exception:
+                            pass
+                except Exception as force_e:
+                    print(f"  Force enumeration failed: {force_e}")
+            except Exception as e3_5:
+                print(f"Method 3.5 failed: {e3_5}")
+            
+            # Method 4: Try to force Windows to load OneCore voices by accessing them directly
+            # Method 4: Try to force Windows to load OneCore voices directly (quiet)
+            try:
+                # Ensure OneCore registry locations are defined
+                try:
+                    import winreg
+                    onecore_locations = [
+                        r"SOFTWARE\\Microsoft\\Speech_OneCore\\Voices\\Tokens",
+                        r"SOFTWARE\\WOW6432Node\\Microsoft\\Speech_OneCore\\Voices\\Tokens"
+                    ]
+                except Exception:
+                    onecore_locations = []
+                
+                # Try to create voice objects for each OneCore token we found
+                onecore_tokens = []
+                for location in onecore_locations:
+                    try:
+                        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, location)
+                        i = 0
+                        while True:
+                            try:
+                                voice_token = winreg.EnumKey(key, i)
+                                onecore_tokens.append(voice_token)
+                                i += 1
+                            except WindowsError:
+                                break
+                        winreg.CloseKey(key)
+                    except Exception:
+                        pass
+                
+                for token in onecore_tokens:
+                    try:
+                        # Try to create a voice object using the token directly
+                        voice_obj = win32com.client.Dispatch("SAPI.SpVoice")
+                        
+                        # Try to set the voice using the token
+                        try:
+                            # Try to create voice using token as a filter
+                            voices_enum = voice_obj.GetVoices()
+                            for j in range(voices_enum.Count):
+                                voice = voices_enum.Item(j)
+                                desc = voice.GetDescription()
+                                # Check if this voice matches our token
+                                if (token in desc or 
+                                    token.replace('MSTTS_V110_', '').replace('M', '') in desc or
+                                    any(part in desc for part in token.split('_')[2:4])):
+                                    if not any(v.GetDescription() == desc for v in all_voices):
+                                        all_voices.append(voice)
+                                    break
+                        except Exception as enum_e:
+                            pass
+                        
+                        # Try alternative method: Create voice using token category
+                        try:
+                            token_cat = win32com.client.Dispatch("SAPI.SpObjectTokenCategory")
+                            token_cat.SetId("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech_OneCore\\Voices", False)
+                            tokens_enum = token_cat.EnumTokens()
+                            for k in range(tokens_enum.Count):
+                                token_obj = tokens_enum.Item(k)
+                                if token in token_obj.GetId():
+                                    # Try to create voice from this token
+                                    try:
+                                        new_voice = win32com.client.Dispatch("SAPI.SpVoice")
+                                        new_voice.Voice = token_obj
+                                        desc = new_voice.Voice.GetDescription()
+                                        if not any(v.GetDescription() == desc for v in all_voices):
+                                            all_voices.append(new_voice.Voice)
+                                    except Exception as create_e:
+                                        pass
+                                    break
+                        except Exception as token_e:
+                            # Silently ignore token category access errors to reduce console noise
+                            pass
+                            
+                    except Exception as token_voice_e:
+                        print(f"    -> Error processing token {token}: {token_voice_e}")
+                        
+            except Exception as e4:
+                print(f"Method 4 failed: {e4}")
+            
+            # Method 5: Try to force Windows to register OneCore voices by accessing Windows Speech settings
+            # Method 5: Skipped opening Windows Speech settings to avoid UI interruptions
+            
+            # Method 6: Try to create working voice objects for OneCore voices
+            # Method 6: Create working voice objects for OneCore voices (quiet mode)
+            try:
+                # For each OneCore token, try to create a working voice object
+                for token in onecore_tokens:
+                    try:
+                        # Quiet: create working voice entries for UI selection
+                        
+                        # Try to create a voice object that can actually be used
+                        class WorkingOneCoreVoice:
+                            def __init__(self, token):
+                                self._token = token
+                                # Convert token to readable name
+                                parts = token.split('_')
+                                if len(parts) >= 4:
+                                    lang = parts[2]
+                                    name = parts[3].replace('M', '')
+                                    self._desc = f"Microsoft {name} - {lang}"
+                                else:
+                                    self._desc = token
+                                # Store the token for later use
+                                self._voice_token = token
+                            
+                            def GetDescription(self):
+                                return self._desc
+                            
+                            def GetId(self):
+                                return self._token
+                            
+                            def GetToken(self):
+                                return self._voice_token
+                        
+                        working_voice = WorkingOneCoreVoice(token)
+                        if not any(v.GetDescription() == working_voice.GetDescription() for v in all_voices):
+                            all_voices.append(working_voice)
+                            # Quiet log
+                        
+                    except Exception as working_e:
+                        print(f"    -> Error creating working voice for {token}: {working_e}")
+                        
+            except Exception as e6:
+                print(f"Method 6 failed: {e6}")
+            
+            # Method 7: Try to force Windows to register OneCore voices by using Windows Speech API directly
+            # Method 7: PowerShell forcing (disabled by default to avoid flashing a console window)
+            if enable_heavy_discovery:
+                try:
+                    import subprocess
+                    try:
+                        ps_command = (
+                            "Add-Type -AssemblyName System.Speech;"
+                            "$synthesizer = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+                            "$voices = $synthesizer.GetInstalledVoices();"
+                            "$voices | ForEach-Object { $_.VoiceInfo.Name }"
+                        )
+                        si = subprocess.STARTUPINFO()
+                        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        creationflags = subprocess.CREATE_NO_WINDOW
+                        result = subprocess.run(['powershell', '-NoProfile', '-Command', ps_command],
+                                                capture_output=True, text=True, startupinfo=si, creationflags=creationflags)
+                        if result.returncode == 0:
+                            try:
+                                enum_voice4 = win32com.client.Dispatch("SAPI.SpVoice")
+                                voices4 = enum_voice4.GetVoices()
+                                for i in range(voices4.Count):
+                                    try:
+                                        voice = voices4.Item(i)
+                                        if not any(v.GetDescription() == voice.GetDescription() for v in all_voices):
+                                            all_voices.append(voice)
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            try:
+                import winreg
+                
+                # Check Speech_OneCore registry locations
+                onecore_locations = [
+                    r"SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens",
+                    r"SOFTWARE\WOW6432Node\Microsoft\Speech_OneCore\Voices\Tokens"
+                ]
+                
+                for location in onecore_locations:
+                    try:
+                        # Quiet: skip registry location logging
+                        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, location)
+                        i = 0
+                        while True:
+                            try:
+                                voice_token = winreg.EnumKey(key, i)
+                                # Quiet: skip per-token logging
+                                
+                                # Try to create voice object from OneCore token
+                                try:
+                                    voice_obj = win32com.client.Dispatch("SAPI.SpVoice")
+                                    # Try to enumerate and find this specific voice
+                                    voices = voice_obj.GetVoices()
+                                    for j in range(voices.Count):
+                                        voice = voices.Item(j)
+                                        desc = voice.GetDescription()
+                                        # Try different matching strategies
+                                        if (voice_token in desc or 
+                                            voice_token.replace('MSTTS_V110_', '').replace('M', '') in desc or
+                                            any(part in desc for part in voice_token.split('_')[2:4])):
+                                            print(f"      -> Matched: {desc}")
+                                            if not any(v.GetDescription() == desc for v in all_voices):
+                                                all_voices.append(voice)
+                                            break
+                                    else:
+                                        # If no match found, try to create a real SAPI voice object
+                                        # Quiet
+                                        try:
+                                            # Try to create voice object directly using the token
+                                            real_voice = win32com.client.Dispatch("SAPI.SpVoice")
+                                            # Try to set the voice by token
+                                            voices_enum = real_voice.GetVoices()
+                                            for k in range(voices_enum.Count):
+                                                voice_obj = voices_enum.Item(k)
+                                                if voice_token in voice_obj.GetDescription():
+                                                    print(f"        -> Found real voice: {voice_obj.GetDescription()}")
+                                                    if not any(v.GetDescription() == voice_obj.GetDescription() for v in all_voices):
+                                                        all_voices.append(voice_obj)
+                                                    break
+                                            else:
+                                                # Try alternative method: Create voice object using token directly
+                                                # Quiet
+                                                try:
+                                                    # Try to create voice using the token as a filter
+                                                    voice_enum = win32com.client.Dispatch("SAPI.SpObjectTokenCategory")
+                                                    voice_enum.SetId("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech\\Voices", False)
+                                                    tokens = voice_enum.EnumTokens()
+                                                    for token_idx in range(tokens.Count):
+                                                        token = tokens.Item(token_idx)
+                                                        if voice_token in token.GetId():
+                                                        # Quiet
+                                                            # Try to create voice from this token
+                                                            try:
+                                                                voice_obj = win32com.client.Dispatch("SAPI.SpVoice")
+                                                                voice_obj.Voice = token
+                                                                desc = voice_obj.Voice.GetDescription()
+                                                                # Quiet
+                                                                if not any(v.GetDescription() == desc for v in all_voices):
+                                                                    all_voices.append(voice_obj.Voice)
+                                                                break
+                                                            except Exception as token_e:
+                                                                # Quiet
+                                                                pass
+                                                except Exception as alt_e:
+                                                    # Quiet
+                                                    pass
+                                                
+                                                # If still no match, create a mock voice
+                                                if not any(v.GetDescription().startswith(f"Microsoft {voice_token.split('_')[3].replace('M', '')}") for v in all_voices):
+                                                    print(f"        -> Creating mock voice for: {voice_token}")
+                                                    class MockOneCoreVoice:
+                                                        def __init__(self, token):
+                                                            self._token = token
+                                                            # Convert token to readable name
+                                                            parts = token.split('_')
+                                                            if len(parts) >= 4:
+                                                                lang = parts[2]
+                                                                name = parts[3].replace('M', '')
+                                                                self._desc = f"Microsoft {name} - {lang}"
+                                                            else:
+                                                                self._desc = token
+                                                        def GetDescription(self):
+                                                            return self._desc
+                                                    mock_voice = MockOneCoreVoice(voice_token)
+                                                    if not any(v.GetDescription() == mock_voice.GetDescription() for v in all_voices):
+                                                        all_voices.append(mock_voice)
+                                        except Exception as real_voice_e:
+                                            # Quiet
+                                            # Fall back to mock voice
+                                            class MockOneCoreVoice:
+                                                def __init__(self, token):
+                                                    self._token = token
+                                                    # Convert token to readable name
+                                                    parts = token.split('_')
+                                                    if len(parts) >= 4:
+                                                        lang = parts[2]
+                                                        name = parts[3].replace('M', '')
+                                                        self._desc = f"Microsoft {name} - {lang}"
+                                                    else:
+                                                        self._desc = token
+                                                def GetDescription(self):
+                                                    return self._desc
+                                            mock_voice = MockOneCoreVoice(voice_token)
+                                            if not any(v.GetDescription() == mock_voice.GetDescription() for v in all_voices):
+                                                all_voices.append(mock_voice)
+                                except Exception as voice_e:
+                                    print(f"      -> Could not create voice: {voice_e}")
+                                
+                                i += 1
+                            except WindowsError:
+                                break
+                        winreg.CloseKey(key)
+                    except Exception as loc_e:
+                        print(f"    Could not access {location}: {loc_e}")
+                        
+            except ImportError:
+                print("winreg not available")
+            
+            # Use the combined list
+            self.voices = all_voices
+            print(f"\nFinal combined voice list: {len(self.voices)} voices")
+                
+        except Exception as e:
+            print(f"Warning: Could not get SAPI voices: {e}")
+            self.voices = []
         
         self.stop_keyboard_hook = None
         self.stop_mouse_hook = None
@@ -1029,14 +1484,35 @@ class GameTextReader:
 
     def speak_text(self, text):
         """Speak text using win32com.client (SAPI.SpVoice)."""
-        # Check if TTS is available
+        # Check if TTS is available; if not, try UWP fallback
         if not hasattr(self, 'speaker') or self.speaker is None:
+            if _ensure_uwp_available():
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self._speak_with_uwp(text))
+                    loop.close()
+                    return
+                except Exception as _e:
+                    pass
             print("Warning: Text-to-speech is not available. Please check your system's speech settings.")
             return
             
         # Always check and stop speech if interrupt is enabled
         if hasattr(self, 'interrupt_on_new_scan_var') and self.interrupt_on_new_scan_var.get():
-            self.stop_speaking()  # Always attempt to stop, even if not currently speaking
+            # Stop SAPI and also stop any ongoing UWP playback to prevent crashes when switching voices
+            self.stop_speaking()
+            if hasattr(self, '_uwp_lock'):
+                try:
+                    with self._uwp_lock:
+                        if hasattr(self, '_uwp_player') and self._uwp_player is not None:
+                            try:
+                                self._uwp_player.pause()
+                            except Exception:
+                                pass
+                            self._uwp_player = None
+                except Exception:
+                    pass
         elif self.is_speaking:
             print("Already speaking. Please stop the current speech first.")
             return
@@ -1049,30 +1525,231 @@ class GameTextReader:
         except Exception as e:
             print(f"Error during speech: {e}")
             self.is_speaking = False
+            # Try UWP fallback if available
+            if _ensure_uwp_available():
+                try:
+                    # Ensure previous UWP playback is stopped before starting new
+                    if hasattr(self, '_uwp_lock'):
+                        try:
+                            with self._uwp_lock:
+                                if hasattr(self, '_uwp_player') and self._uwp_player is not None:
+                                    try:
+                                        self._uwp_player.pause()
+                                    except Exception:
+                                        pass
+                                    self._uwp_player = None
+                        except Exception:
+                            pass
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self._speak_with_uwp(text))
+                    loop.close()
+                    return
+                except Exception as _e:
+                    pass
 
     def stop_speaking(self):
         """Stop the ongoing speech immediately."""
-        if not hasattr(self, 'speaker') or self.speaker is None:
-            self.is_speaking = False
-            return
-            
+        # Stop both SAPI and UWP playback
         try:
-            if self.speaker:
-                self.speaker.Speak("", 2)  # Use SVSFPurgeBeforeSpeak flag
+            if hasattr(self, 'speaker') and self.speaker:
+                try:
+                    self.speaker.Speak("", 2)
+                except Exception:
+                    pass
             self.is_speaking = False
-            
-            # Only try to reinitialize if we have a speaker
+            # Signal UWP worker to stop current playback
+            try:
+                self._uwp_queue.put_nowait(("STOP", None, None))
+            except Exception:
+                pass
+            # Reinitialize SAPI speaker
             try:
                 self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
                 self.speaker.Volume = int(self.volume.get())
-                print("Speech stopped.\n--------------------------")
-            except Exception as e2:
-                print(f"Warning: Could not reinitialize speech engine: {e2}")
+            except Exception:
                 self.speaker = None
-                
+            print("Speech stopped.\n--------------------------")
         except Exception as e:
             print(f"Error stopping speech: {e}")
             self.is_speaking = False
+
+    async def _speak_with_uwp(self, text: str, preferred_desc: str = None):
+        """Speak using UWP Narrator (OneCore) via Windows.Media.SpeechSynthesis.
+        This plays audio directly and does not integrate with SAPI voices. Used as a fallback
+        to get OneCore/Narrator voices speaking when SAPI can't set them.
+        """
+        if not UWP_TTS_AVAILABLE:
+            return
+        # Import lazily to avoid hard dependency at import time
+        try:
+            from winrt.windows.media.speechsynthesis import SpeechSynthesizer  # type: ignore
+        except Exception:
+            try:
+                from winsdk.windows.media.speechsynthesis import SpeechSynthesizer  # type: ignore
+            except Exception:
+                return
+        try:
+            from winrt.windows.media.playback import MediaPlayer  # type: ignore
+            from winrt.windows.media.core import MediaSource  # type: ignore
+        except Exception:
+            try:
+                from winsdk.windows.media.playback import MediaPlayer  # type: ignore
+                from winsdk.windows.media.core import MediaSource  # type: ignore
+            except Exception:
+                return
+
+        synth = SpeechSynthesizer()
+        # Try to map preferred voice to UWP voice list (match by name and normalized language)
+        try:
+            if preferred_desc:
+                voices = list(SpeechSynthesizer.all_voices)
+                name_part = preferred_desc
+                lang_part = None
+                if ' - ' in preferred_desc:
+                    name_part, lang_part = [p.strip() for p in preferred_desc.split(' - ', 1)]
+                # Remove vendor prefix
+                name_key = name_part.replace('Microsoft', '').strip().lower()
+                # Normalize language like enAU -> en-AU
+                def norm_lang(code: str) -> str:
+                    if not code:
+                        return ''
+                    code = code.strip()
+                    if '-' in code:
+                        return code
+                    if len(code) == 4:
+                        return f"{code[:2].lower()}-{code[2:].upper()}"
+                    return code
+                target_lang = norm_lang(lang_part) if lang_part else ''
+
+                # First pass: match both name and language
+                chosen = None
+                for v in voices:
+                    v_name = getattr(v, 'display_name', '')
+                    v_lang = getattr(v, 'language', '')
+                    if name_key and name_key in v_name.lower():
+                        if not target_lang or v_lang.lower() == target_lang.lower():
+                            chosen = v
+                            break
+                # Second pass: fuzzy language match (prefix)
+                if not chosen and name_key:
+                    for v in voices:
+                        v_name = getattr(v, 'display_name', '')
+                        v_lang = getattr(v, 'language', '')
+                        if name_key in v_name.lower():
+                            if not target_lang or v_lang.lower().startswith(target_lang.split('-')[0].lower()):
+                                chosen = v
+                                break
+                # Third pass: fallback by language only
+                if not chosen and target_lang:
+                    for v in voices:
+                        if getattr(v, 'language', '').lower() == target_lang.lower():
+                            chosen = v
+                            break
+                if chosen is not None:
+                    synth.voice = chosen
+        except Exception as _e:
+            pass
+        stream = await synth.synthesize_text_to_stream_async(text)
+        # Enqueue for worker playback to serialize and avoid crashes
+        try:
+            interrupt_flag = True
+            try:
+                if hasattr(self, 'interrupt_on_new_scan_var'):
+                    interrupt_flag = bool(self.interrupt_on_new_scan_var.get())
+            except Exception:
+                pass
+            # If not interrupting, queue the stream; if interrupting, signal to cut current
+            if interrupt_flag:
+                try:
+                    self._uwp_interrupt.set()
+                except Exception:
+                    pass
+            self._uwp_queue.put(("PLAY", stream, interrupt_flag))
+        except Exception:
+            pass
+
+    def _uwp_worker(self):
+        # Lazy imports inside worker
+        try:
+            try:
+                from winrt.windows.media.playback import MediaPlayer
+                from winrt.windows.media.core import MediaSource
+            except Exception:
+                from winsdk.windows.media.playback import MediaPlayer  # type: ignore
+                from winsdk.windows.media.core import MediaSource  # type: ignore
+        except Exception:
+            MediaPlayer = None
+            MediaSource = None
+        player = None
+        while not getattr(self, '_uwp_thread_stop', threading.Event()).is_set():
+            try:
+                cmd, payload, interrupt_flag = self._uwp_queue.get(timeout=0.1)
+            except Exception:
+                continue
+            if cmd == "STOP":
+                try:
+                    if player is not None:
+                        try:
+                            player.pause()
+                        except Exception:
+                            pass
+                        player = None
+                except Exception:
+                    pass
+                continue
+            if cmd == "PLAY" and MediaPlayer is not None and MediaSource is not None:
+                stream = payload
+                try:
+                    # If not interrupting and player is active, wait for it to finish before playing next
+                    if player is not None and not interrupt_flag:
+                        try:
+                            try:
+                                from winrt.windows.media.playback import MediaPlaybackState  # type: ignore
+                            except Exception:
+                                try:
+                                    from winsdk.windows.media.playback import MediaPlaybackState  # type: ignore
+                                except Exception:
+                                    MediaPlaybackState = None
+                            if MediaPlaybackState is not None:
+                                while True:
+                                    session = getattr(player, 'playback_session', None)
+                                    current_state = None
+                                    if session is not None:
+                                        try:
+                                            current_state = session.playback_state
+                                        except Exception:
+                                            pass
+                                    # proceed when not actively playing or when interrupted
+                                    if current_state is None or int(current_state) != int(MediaPlaybackState.PLAYING) or self._uwp_interrupt.is_set():
+                                        break
+                                    time.sleep(0.01)
+                        except Exception:
+                            # If we can't read state, just fall through without long waits
+                            pass
+                    # If interrupt flag set or interrupt event set, stop current
+                    if player is not None and (interrupt_flag or self._uwp_interrupt.is_set()):
+                        try:
+                            player.pause()
+                        except Exception:
+                            pass
+                        player = None
+                        try:
+                            self._uwp_interrupt.clear()
+                        except Exception:
+                            pass
+                    # Start new
+                    player = MediaPlayer()
+                    try:
+                        vol = float(self.volume.get()) if hasattr(self, 'volume') else 100.0
+                        player.volume = max(0.0, min(1.0, vol / 100.0))
+                    except Exception:
+                        pass
+                    player.source = MediaSource.create_from_stream(stream, 'audio/wav')
+                    player.play()
+                except Exception:
+                    # swallow and continue
+                    pass
             
     def restart_tesseract(self):
         """Forcefully stop the speech and reinitialize the system."""
@@ -1128,7 +1805,21 @@ class GameTextReader:
         layout_frame.pack(side='left', fill='x', expand=True)
         
         tk.Label(layout_frame, text="Loaded Layout:").pack(side='left')
-        tk.Label(layout_frame, textvariable=self.layout_file, font=("Helvetica", 10, "bold")).pack(side='left', padx=5)
+        # Show 'n/a' when no layout is loaded, without changing the underlying value used by logic
+        self.layout_label = tk.Label(layout_frame, text="n/a", font=("Helvetica", 10, "bold"))
+        self.layout_label.pack(side='left', padx=5)
+
+        def _refresh_layout_label(*_):
+            value = self.layout_file.get()
+            self.layout_label.config(text=(os.path.basename(value) if value else "n/a"))
+
+        # Update label whenever layout changes
+        try:
+            self.layout_file.trace_add('write', _refresh_layout_label)
+        except Exception:
+            # Fallback for older Tk versions
+            self.layout_file.trace('w', _refresh_layout_label)
+        _refresh_layout_label()
         
         # Layout control buttons
         layout_buttons_frame = tk.Frame(control_frame)
@@ -1182,7 +1873,7 @@ class GameTextReader:
         self.create_checkbox(checkbox_frame, "Read gamer units:", self.read_game_units_var, side='left', padx=5)
         self.create_checkbox(checkbox_frame, "Fullscreen mode:", self.fullscreen_mode_var, side='left', padx=5)
         
-        # Add checkbox to allow left/right mouse buttons as hotkeys
+        # Add checkbox to allow left/right mouse buttons as hotkeys (keep on same line)
         self.allow_mouse_buttons_var = tk.BooleanVar(value=False)
         self.create_checkbox(checkbox_frame, "Allow mouse left/right:", self.allow_mouse_buttons_var, side='left', padx=5)
 
@@ -1209,6 +1900,13 @@ class GameTextReader:
         self.stop_hotkey_button = tk.Button(add_area_frame, text="Set Stop Hotkey", 
                                           command=self.set_stop_hotkey)
         self.stop_hotkey_button.pack(side='right')
+
+        # Container for the Auto Read row (placed above the scroll area)
+        self.auto_read_outer_frame = tk.Frame(self.root)
+        self.auto_read_outer_frame.pack(fill='x', padx=10, pady=(4, 2))
+
+        # Thin separator line under Auto Read and before the scroll area
+        ttk.Separator(self.root, orient='horizontal').pack(fill='x', padx=10, pady=(2, 2))
         
         # Frame for the areas - now with scrollable canvas
         self.area_outer_frame = tk.Frame(self.root)
@@ -1333,85 +2031,163 @@ class GameTextReader:
                                font=("Helvetica", 16, "bold"))
         title_label.pack(side='left')
         
-        # Credits and Links Section - Improved Layout
+        # Credits/Links Area replaced by clickable images
         credits_frame = ttk.Frame(main_frame)
         credits_frame.pack(fill='x', pady=(0, 20))
 
-        # --- Horizontal Frame for Program Info and Official Links ---
-        credits_row = ttk.Frame(credits_frame)
-        credits_row.pack(fill='x', pady=(0, 5))
+        images_row = ttk.Frame(credits_frame)
+        images_row.pack(fill='x', pady=(0, 5))
 
-        # Program Info (left)
-        proginfo_frame = ttk.Frame(credits_row)
-        proginfo_frame.pack(side='left', padx=0, anchor='n')
-        proginfo_label = ttk.Label(proginfo_frame, text="Program Information", font=("Helvetica", 11, "bold"))
-        proginfo_label.pack(side='top', anchor='w')
-        designer_label = ttk.Label(proginfo_frame, text="Designer: MertenNor", font=("Helvetica", 10))
-        designer_label.pack(side='left', padx=(0, 15))
-        # Coder line with embedded Cursor link
-        coder_frame = ttk.Frame(proginfo_frame)
-        coder_frame.pack(side='left')
-        coder_label1 = ttk.Label(coder_frame, text="Coder: Different AI's via ", font=("Helvetica", 10))
-        coder_label1.pack(side='left')
-        cursor_link = ttk.Label(coder_frame, text="Cursor", font=("Helvetica", 10, "underline"), foreground='black', cursor='hand2')
-        cursor_link.pack(side='left')
-        cursor_link.bind("<Button-1>", lambda e: open_url("https://www.cursor.com/"))
-        cursor_link.bind("<Enter>", lambda e: cursor_link.configure(font=("Helvetica", 10, "underline")))
-        cursor_link.bind("<Leave>", lambda e: cursor_link.configure(font=("Helvetica", 10)))
+        # Resolve Assets paths
+        assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Assets')
+        coffee_path = os.path.join(assets_dir, 'Coffe_info.png')
+        google_form_path = os.path.join(assets_dir, 'Google_form_info.png')
+        github_path = os.path.join(assets_dir, 'Github_info.png')
 
-        # Add Windsurf link
-        windsurf_label = ttk.Label(coder_frame, text=" and ", font=("Helvetica", 10))
-        windsurf_label.pack(side='left')
-        windsurf_link = ttk.Label(coder_frame, text="Windsurf", font=("Helvetica", 10, "underline"), foreground='black', cursor='hand2')
-        windsurf_link.pack(side='left')
-        windsurf_link.bind("<Button-1>", lambda e: open_url("https://windsurf.com/"))
-        windsurf_link.bind("<Enter>", lambda e: windsurf_link.configure(font=("Helvetica", 10, "underline")))
-        windsurf_link.bind("<Leave>", lambda e: windsurf_link.configure(font=("Helvetica", 10)))
+        # Load images and keep references on the window to avoid garbage collection
+        try:
+            coffee_img = Image.open(coffee_path)
+            google_img = Image.open(google_form_path)
+            github_img = Image.open(github_path)
 
-        # Official Links (right)
-        links_frame = ttk.Frame(credits_row)
-        links_frame.pack(side='left', padx=(80, 0), anchor='n')
-        links_label = ttk.Label(links_frame, text="Official Links", font=("Helvetica", 11, "bold"))
-        links_label.pack(side='top', anchor='w')
+            # Store PIL images
+            info_window.coffee_pil = coffee_img
+            info_window.google_pil = google_img
+            info_window.github_pil = github_img
 
-        # GitHub link
-        github_frame = ttk.Frame(links_frame)
-        github_frame.pack(fill='x', pady=(2, 0))
-        github_label = ttk.Label(github_frame, text="GitHub: ", font=("Helvetica", 10, "bold"))
-        github_label.pack(side='left')
-        github_link = ttk.Label(github_frame, text="GitHub.com/mertennor/gamereader", font=("Helvetica", 10), foreground='black', cursor='hand2')
-        github_link.pack(side='left')
-        github_link.bind("<Button-1>", lambda e: open_url("https://github.com/MertenNor/GameReader"))
-        github_link.bind("<Enter>", lambda e: github_link.configure(font=("Helvetica", 10, "underline")))
-        github_link.bind("<Leave>", lambda e: github_link.configure(font=("Helvetica", 10)))
+            # Determine available width and compute downscale factor so all three fit on one row
+            info_window.update_idletasks()
+            try:
+                window_width = info_window.winfo_width()
+            except Exception:
+                window_width = 900
+            horizontal_padding = 40  # main_frame left/right padding approx
+            per_canvas_pad = 20      # padx=10 on each side per canvas
+            total_pad = 3 * per_canvas_pad
+            hover_scale = 1.08
+            sum_orig_widths = coffee_img.size[0] + google_img.size[0] + github_img.size[0]
+            available_width = max(200, window_width - horizontal_padding)
+            needed_width = hover_scale * sum_orig_widths + total_pad
+            base_scale = 1.0 if needed_width <= available_width else max(0.2, (available_width - total_pad) / (hover_scale * sum_orig_widths))
 
-        # --- Section: Support & Feedback ---
-        support_frame = ttk.Frame(credits_frame)
-        support_frame.pack(fill='x', pady=(10, 5))
-        support_label = ttk.Label(support_frame, text="Support & Feedback", font=("Helvetica", 11, "bold"))
-        support_label.pack(side='top', anchor='w')
+            # Create normal and hover-sized images with scaling applied
+            def make_photos(pil_img):
+                w, h = pil_img.size
+                w_norm = max(1, int(w * base_scale))
+                h_norm = max(1, int(h * base_scale))
+                w_hover = max(1, int(w * base_scale * hover_scale))
+                h_hover = max(1, int(h * base_scale * hover_scale))
+                normal = ImageTk.PhotoImage(pil_img.resize((w_norm, h_norm), Image.LANCZOS))
+                hover = ImageTk.PhotoImage(pil_img.resize((w_hover, h_hover), Image.LANCZOS))
+                return normal, hover
 
-        # Coffee link
-        coffee_frame = ttk.Frame(support_frame)
-        coffee_frame.pack(fill='x', pady=(2, 0))
-        coffee_label = ttk.Label(coffee_frame, text="Buy me a Coffee: ", font=("Helvetica", 10, "bold"))
-        coffee_label.pack(side='left')
-        support_link = ttk.Label(coffee_frame, text="BuyMeaCoffee.com/mertennor ☕", font=("Helvetica", 10), foreground='black', cursor='hand2')
-        support_link.pack(side='left')
-        support_link.bind("<Button-1>", lambda e: open_url("https://www.buymeacoffee.com/mertennor"))
-        support_link.bind("<Enter>", lambda e: support_link.configure(font=("Helvetica", 10, "underline")))
-        support_link.bind("<Leave>", lambda e: support_link.configure(font=("Helvetica", 10)))
+            info_window.coffee_photo, info_window.coffee_photo_hover = make_photos(info_window.coffee_pil)
+            info_window.google_photo, info_window.google_photo_hover = make_photos(info_window.google_pil)
+            info_window.github_photo, info_window.github_photo_hover = make_photos(info_window.github_pil)
 
-        # Feedback link
-        feedback_frame = ttk.Frame(support_frame)
-        feedback_frame.pack(fill='x', pady=(2, 0))
-        feedback_label = ttk.Label(feedback_frame, text="Want something added? Found bugs? Let me know!: via this Google Form: ", font=("Helvetica", 10, "bold"))
-        feedback_label.pack(side='left')
-        feedback_link = ttk.Label(feedback_frame, text="Forms.Gle/8YBU8atkgwjyzdM79", font=("Helvetica", 10), foreground='black', cursor='hand2')
-        feedback_link.pack(side='left')
-        feedback_link.bind("<Button-1>", lambda e: open_url("https://forms.gle/8YBU8atkgwjyzdM79"))
-        feedback_link.bind("<Enter>", lambda e: feedback_link.configure(font=("Helvetica", 10, "underline")))
-        feedback_link.bind("<Leave>", lambda e: feedback_link.configure(font=("Helvetica", 10)))
+            # Smooth shrink animation on mouse leave
+            def _cancel_anim(c):
+                if hasattr(c, "_anim_job") and c._anim_job:
+                    try:
+                        c.after_cancel(c._anim_job)
+                    except Exception:
+                        pass
+                    c._anim_job = None
+
+            def animate_to_normal(canvas, image_id, pil_img):
+                duration_ms = 230
+                steps = 15
+                _cancel_anim(canvas)
+                frames = []
+
+                def step(i):
+                    t = i / steps
+                    scale = (base_scale * hover_scale) + (base_scale - base_scale * hover_scale) * t
+                    w = max(1, int(pil_img.size[0] * scale))
+                    h = max(1, int(pil_img.size[1] * scale))
+                    frame = ImageTk.PhotoImage(pil_img.resize((w, h), Image.LANCZOS))
+                    frames.append(frame)
+                    canvas.itemconfig(image_id, image=frame)
+                    if i < steps:
+                        canvas._anim_job = canvas.after(int(duration_ms / steps), lambda: step(i + 1))
+                    else:
+                        canvas._anim_job = None
+                        canvas._anim_frames = frames  # keep refs
+
+                step(0)
+
+            # Coffee image (fixed-size canvas, allows hover to be clipped by bounds)
+            coffee_cw = info_window.coffee_photo_hover.width()
+            coffee_ch = info_window.coffee_photo_hover.height()
+            coffee_canvas = tk.Canvas(
+                images_row,
+                width=coffee_cw,
+                height=coffee_ch,
+                highlightthickness=0,
+                bd=0,
+                cursor='hand2'
+            )
+            coffee_canvas.pack(side='left', padx=10)
+            coffee_img_id = coffee_canvas.create_image(coffee_cw // 2, coffee_ch // 2, image=info_window.coffee_photo)
+            coffee_canvas.bind("<Button-1>", lambda e: open_url("https://buymeacoffee.com/mertennor"))
+            coffee_canvas.bind(
+                "<Enter>",
+                lambda e, c=coffee_canvas, iid=coffee_img_id: c.itemconfig(iid, image=info_window.coffee_photo_hover)
+            )
+            coffee_canvas.bind(
+                "<Leave>",
+                lambda e, c=coffee_canvas, iid=coffee_img_id: animate_to_normal(c, iid, info_window.coffee_pil)
+            )
+
+            # Google Form image (fixed-size canvas)
+            google_cw = info_window.google_photo_hover.width()
+            google_ch = info_window.google_photo_hover.height()
+            google_canvas = tk.Canvas(
+                images_row,
+                width=google_cw,
+                height=google_ch,
+                highlightthickness=0,
+                bd=0,
+                cursor='hand2'
+            )
+            google_canvas.pack(side='left', padx=10)
+            google_img_id = google_canvas.create_image(google_cw // 2, google_ch // 2, image=info_window.google_photo)
+            google_canvas.bind("<Button-1>", lambda e: open_url("https://forms.gle/8YBU8atkgwjyzdM79"))
+            google_canvas.bind(
+                "<Enter>",
+                lambda e, c=google_canvas, iid=google_img_id: c.itemconfig(iid, image=info_window.google_photo_hover)
+            )
+            google_canvas.bind(
+                "<Leave>",
+                lambda e, c=google_canvas, iid=google_img_id: animate_to_normal(c, iid, info_window.google_pil)
+            )
+
+            # GitHub image (fixed-size canvas)
+            github_cw = info_window.github_photo_hover.width()
+            github_ch = info_window.github_photo_hover.height()
+            github_canvas = tk.Canvas(
+                images_row,
+                width=github_cw,
+                height=github_ch,
+                highlightthickness=0,
+                bd=0,
+                cursor='hand2'
+            )
+            github_canvas.pack(side='left', padx=10)
+            github_img_id = github_canvas.create_image(github_cw // 2, github_ch // 2, image=info_window.github_photo)
+            github_canvas.bind("<Button-1>", lambda e: open_url("https://github.com/MertenNor/GameReader"))
+            github_canvas.bind(
+                "<Enter>",
+                lambda e, c=github_canvas, iid=github_img_id: c.itemconfig(iid, image=info_window.github_photo_hover)
+            )
+            github_canvas.bind(
+                "<Leave>",
+                lambda e, c=github_canvas, iid=github_img_id: animate_to_normal(c, iid, info_window.github_pil)
+            )
+        except Exception as e:
+            # Fallback text if images can't be displayed
+            fallback = ttk.Label(credits_frame, text=f"Error displaying info images: {e}", foreground='red')
+            fallback.pack(anchor='w')
 
 
         # Spacer before Tesseract warning
@@ -1631,7 +2407,7 @@ class GameTextReader:
         
         # Add close button
         close_button = ttk.Button(bottom_frame, 
-                                 text="wait?? what is this button doing down here?", 
+                                 text="Close", 
                                  command=info_window.destroy,
                                  width=45)
         close_button.pack(side='right')
@@ -1647,7 +2423,18 @@ class GameTextReader:
         # Make window modal
         info_window.transient(self.root)
         info_window.grab_set()
-
+        
+    def test_hotkey_working(self, hotkey_str):
+        """Test if a hotkey is working properly"""
+        try:
+            # Try to register the hotkey temporarily
+            test_hook = keyboard.add_hotkey(hotkey_str, lambda: None, suppress=False)
+            keyboard.remove_hotkey(hotkey_str)
+            return True
+        except Exception as e:
+            print(f"Hotkey test failed for {hotkey_str}: {e}")
+            return False
+            
     def show_debug(self):
         if not hasattr(sys, 'stdout_original'):
             sys.stdout_original = sys.stdout
@@ -1690,53 +2477,172 @@ class GameTextReader:
                 self.restore_all_hotkeys()
             except Exception as e:
                 print(f"Warning: Error restoring hotkeys: {e}")
+            # Cleanup any temp hooks and preview
+            try:
+                if hasattr(self, '_hotkey_preview_job') and self._hotkey_preview_job:
+                    self.root.after_cancel(self._hotkey_preview_job)
+                    self._hotkey_preview_job = None
+            except Exception:
+                pass
+            try:
+                if hasattr(self.stop_hotkey_button, 'keyboard_hook_temp'):
+                    keyboard.unhook(self.stop_hotkey_button.keyboard_hook_temp)
+                    delattr(self.stop_hotkey_button, 'keyboard_hook_temp')
+            except Exception:
+                try:
+                    if hasattr(self.stop_hotkey_button, 'keyboard_hook_temp'):
+                        delattr(self.stop_hotkey_button, 'keyboard_hook_temp')
+                except Exception:
+                    pass
+            try:
+                if hasattr(self.stop_hotkey_button, 'mouse_hook_temp'):
+                    mouse.unhook(self.stop_hotkey_button.mouse_hook_temp)
+                    delattr(self.stop_hotkey_button, 'mouse_hook_temp')
+            except Exception:
+                try:
+                    if hasattr(self.stop_hotkey_button, 'mouse_hook_temp'):
+                        delattr(self.stop_hotkey_button, 'mouse_hook_temp')
+                except Exception:
+                    pass
+            try:
+                if hasattr(self.stop_hotkey_button, 'shift_release_hooks'):
+                    for h in getattr(self.stop_hotkey_button, 'shift_release_hooks', []) or []:
+                        try:
+                            keyboard.unhook(h)
+                        except Exception:
+                            pass
+                    delattr(self.stop_hotkey_button, 'shift_release_hooks')
+            except Exception:
+                pass
         
-        def on_key_press(event):
-            if self._hotkey_assignment_cancelled or not self.setting_hotkey:
-                return
-                
-            # Always ignore Escape key
-            if event.scan_code == 1:  # Escape key
-                return
-                
-            key_name = event.name
-            if event.scan_code in self.numpad_scan_codes:
-                key_name = f"num_{self.numpad_scan_codes[event.scan_code]}"
-            
-            # Check if this key is already used by any area
+        # Track whether a non-modifier was pressed
+        combo_state = {'non_modifier_pressed': False}
+
+        def _assign_stop_hotkey_and_register(hk_str):
+            # Check duplicate against area hotkeys
             for area_frame, hotkey_button, _, area_name_var, _, _, _ in self.areas:
-                if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey == key_name:
+                if hasattr(hotkey_button, 'hotkey') and hotkey_button.hotkey == hk_str:
                     show_thinkr_warning(self, area_name_var.get())
                     self._hotkey_assignment_cancelled = True
                     self.setting_hotkey = False
                     self.stop_hotkey_button.config(text="Set Stop Hotkey")
                     finish_hotkey_assignment()
-                    return
-            
-            # Remove existing stop hotkey if it exists
+                    return False
+            # Clean old stop hotkey hooks
             if hasattr(self, 'stop_hotkey'):
                 try:
                     if hasattr(self.stop_hotkey_button, 'mock_button'):
                         self._cleanup_hooks(self.stop_hotkey_button.mock_button)
                 except Exception as e:
                     print(f"Error cleaning up stop hotkey hooks: {e}")
-            
-            self.stop_hotkey = key_name
-            
-            # Create a mock button object to use with setup_hotkey
-            mock_button = type('MockButton', (), {'hotkey': key_name, 'is_stop_button': True})
-            self.stop_hotkey_button.mock_button = mock_button  # Store reference to mock button
-            
-            # Setup the hotkey
-            self.setup_hotkey(self.stop_hotkey_button.mock_button, None)  # Pass None as area_frame for stop hotkey
-            
-            display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
-            self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
-            print(f"Set Stop hotkey: {key_name}\n--------------------------")
-            
+            self.stop_hotkey = hk_str
+            # Register
+            mock_button = type('MockButton', (), {'hotkey': hk_str, 'is_stop_button': True})
+            self.stop_hotkey_button.mock_button = mock_button
+            self.setup_hotkey(self.stop_hotkey_button.mock_button, None)
+            # Nicer display mapping for sided modifiers and numpad
+            display_name = hk_str.replace('numpad ', 'NUMPAD ').replace('num_', 'num:') \
+                                   .replace('left ctrl','L-CTRL').replace('right ctrl','R-CTRL') \
+                                   .replace('left alt','L-ALT').replace('right alt','R-ALT') \
+                                   .replace('left shift','L-SHIFT').replace('right shift','R-SHIFT') \
+                                   .replace('windows','WIN')
+            self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name.upper()} ]")
+            print(f"Set Stop hotkey: {hk_str}\n--------------------------")
             self.setting_hotkey = False
             self._hotkey_assignment_cancelled = True
             finish_hotkey_assignment()
+            return True
+
+        def on_key_press(event):
+            if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                return
+            # Ignore Escape
+            if event.scan_code == 1:
+                return
+            # Normalize name and side
+            raw_name = (event.name or '').lower()
+            side = None
+            if any(s in raw_name for s in ["right", "høyre", "rechts", "derecha", "droite", "destra", "dereito", "höger"]):
+                side = 'right'
+            if any(s in raw_name for s in ["left", "venstre", "links", "izquierda", "gauche", "sinistra", "esquerda", "vänster"]):
+                side = 'left'
+            base = None
+            if any(x in raw_name for x in ["ctrl", "control", "strg"]):
+                base = 'ctrl'
+            elif any(x in raw_name for x in ["altgr", "option", "menu"]) or raw_name.strip() == 'alt':
+                base = 'alt'
+            elif any(x in raw_name for x in ["shift", "skift", "umschalt"]):
+                base = 'shift'
+            elif any(x in raw_name for x in ["windows", "win", "super", "meta", "cmd", "command", "lwin", "rwin"]):
+                base = 'windows'
+            if base:
+                if base in ('ctrl','alt'):
+                    name = f"{side or 'left'} {base}"
+                elif base in ('shift','windows'):
+                    name = base
+                else:
+                    name = base
+            else:
+                name = raw_name
+
+            # Non-modifier pressed
+            if name not in ('ctrl','left ctrl','right ctrl','alt','left alt','right alt','shift','windows'):
+                combo_state['non_modifier_pressed'] = True
+            # Bare modifier assignment path
+            if name in ('ctrl','shift','alt','windows'):
+                def _assign_bare_modifier():
+                    if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                        return
+                    try:
+                        held = []
+                        if keyboard.is_pressed('left ctrl'): held.append('left ctrl')
+                        if keyboard.is_pressed('right ctrl'): held.append('right ctrl')
+                        if keyboard.is_pressed('shift'): held.append('shift')
+                        if keyboard.is_pressed('left alt'): held.append('left alt')
+                        if keyboard.is_pressed('right alt'): held.append('right alt')
+                        if keyboard.is_pressed('left windows') or keyboard.is_pressed('right windows') or keyboard.is_pressed('windows'):
+                            held.append('windows')
+                        if len(held) == 1:
+                            only = held[0]
+                            if (base == 'ctrl' and (only in ['left ctrl','right ctrl'])) or \
+                               (base == 'alt' and (only in ['left alt','right alt'])) or \
+                               (base == 'shift' and only == 'shift') or \
+                               (base == 'windows' and only == 'windows'):
+                                key_name_local = only
+                                _assign_stop_hotkey_and_register(key_name_local)
+                                return
+                    except Exception:
+                        pass
+                try:
+                    self.root.after(200, _assign_bare_modifier)
+                except Exception:
+                    pass
+                return
+
+            # Build combo from held modifiers + base key
+            try:
+                mods = []
+                if keyboard.is_pressed('left ctrl'): mods.append('left ctrl')
+                if keyboard.is_pressed('right ctrl'): mods.append('right ctrl')
+                if keyboard.is_pressed('shift'): mods.append('shift')
+                if keyboard.is_pressed('left alt'): mods.append('left alt')
+                if keyboard.is_pressed('right alt'): mods.append('right alt')
+                if keyboard.is_pressed('left windows') or keyboard.is_pressed('right windows') or keyboard.is_pressed('windows'):
+                    mods.append('windows')
+            except Exception:
+                mods = []
+
+            base_key = name
+            if event.scan_code in self.numpad_scan_codes:
+                sym = self.numpad_scan_codes[event.scan_code]
+                base_key = f"numpad {sym}"
+            if base_key in ("ctrl", "shift", "alt", "windows", "left ctrl", "right ctrl", "left alt", "right alt"):
+                combo_parts = (mods + [base_key]) if base_key not in mods else mods[:]
+            else:
+                combo_parts = mods + [base_key]
+            key_name = "+".join(p for p in combo_parts if p)
+
+            _assign_stop_hotkey_and_register(key_name)
             return
             
         def on_mouse_click(event):
@@ -1788,7 +2694,7 @@ class GameTextReader:
             self.setup_hotkey(self.stop_hotkey_button.mock_button, None)  # Pass None as area_frame for stop hotkey
             
             display_name = f"Mouse Button {event.button}"
-            self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
+            self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name.upper()} ]")
             print(f"Set Stop hotkey: {key_name}\n--------------------------")
             
             self.setting_hotkey = False
@@ -1804,6 +2710,11 @@ class GameTextReader:
             # Store the hooks as attributes of the button for cleanup
             self.stop_hotkey_button.keyboard_hook_temp = keyboard.on_press(on_key_press, suppress=True)
             self.stop_hotkey_button.mouse_hook_temp = mouse.hook(on_mouse_click)
+            # Start live preview polling
+            try:
+                self._hotkey_preview_job = self.root.after(80, _update_hotkey_preview)
+            except Exception:
+                pass
         except Exception as e:
             print(f"Error setting up hotkey hooks: {e}")
             self.stop_hotkey_button.config(text="Set Stop Hotkey")
@@ -1811,6 +2722,30 @@ class GameTextReader:
             finish_hotkey_assignment()
             return
         
+        # Also listen for Shift key release to assign LSHIFT/RSHIFT reliably
+        def on_shift_release(_e):
+            if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                return
+            if combo_state.get('non_modifier_pressed'):
+                return
+            side_label = 'left'
+            try:
+                raw = (getattr(_e, 'name', '') or '').lower()
+                if 'right' in raw or 'right shift' in raw:
+                    side_label = 'right'
+            except Exception:
+                pass
+            key_name_local = f"{side_label} shift"
+            _assign_stop_hotkey_and_register(key_name_local)
+
+        try:
+            self.stop_hotkey_button.shift_release_hooks = [
+                keyboard.on_release_key('left shift', on_shift_release),
+                keyboard.on_release_key('right shift', on_shift_release),
+            ]
+        except Exception:
+            self.stop_hotkey_button.shift_release_hooks = []
+
         # Set a timer to reset the button if no key is pressed
         def reset_button():
             if not hasattr(self, 'stop_hotkey') or not self.stop_hotkey:
@@ -1835,7 +2770,12 @@ class GameTextReader:
             return 0 <= value <= 100
 
     def add_read_area(self, removable=True, editable_name=True, area_name="Area Name"):
-        area_frame = tk.Frame(self.area_frame)
+        # Decide parent: place 'Auto Read' above the scroll area
+        parent_container = self.area_frame
+        if not removable and area_name == "Auto Read" and hasattr(self, 'auto_read_outer_frame'):
+            parent_container = self.auto_read_outer_frame
+
+        area_frame = tk.Frame(parent_container)
         area_frame.pack(pady=(4, 0), anchor='center')
         area_name_var = tk.StringVar(value=area_name)
         area_name_label = tk.Label(area_frame, textvariable=area_name_var)
@@ -1890,7 +2830,15 @@ class GameTextReader:
         tk.Label(area_frame, text=" ⏐ ").pack(side="left")
 
         voice_var = tk.StringVar(value="Select Voice")
-        voice_menu = tk.OptionMenu(area_frame, voice_var, "Select Voice", *[voice.name for voice in self.voices])
+        # Get voice descriptions for the dropdown menu
+        voice_names = []
+        if hasattr(self, 'voices') and self.voices:
+            try:
+                voice_names = [voice.GetDescription() for voice in self.voices]
+            except Exception as e:
+                print(f"Warning: Could not get voice descriptions: {e}")
+                voice_names = []
+        voice_menu = tk.OptionMenu(area_frame, voice_var, "Select Voice", *voice_names)
         voice_menu.pack(side="left")
         # Add separator
         tk.Label(area_frame, text=" ⏐ ").pack(side="left")
@@ -1972,8 +2920,8 @@ class GameTextReader:
             bind_resize_events(widget)
         area_frame.bind('<Configure>', lambda e: self.resize_window())
 
-        # Automatically resize the window
-        self.resize_window()
+        # Automatically recompute layout without forcing geometry, so default window size is preserved
+        self.resize_window(force=True)
 
     def remove_area(self, area_frame, area_name):
         # Find and clean up the hotkey for this area
@@ -2015,28 +2963,54 @@ class GameTextReader:
         self.areas = [area for area in self.areas if area[0] != area_frame]
         print(f"Removed area: {area_name}\n--------------------------")
 
-    def resize_window(self):
-        """Resize the window based on the number of areas and the longest area line. Keeps window height fixed after 10 areas, enabling scrollbar."""
-        base_height = 210  # Height for main controls, padding, etc.
+    def resize_window(self, force: bool = False):
+        """Resize the window based on current content.
+        If force is True, actively set the window geometry to fit the content (used after loading a layout)."""
+        # Ensure positions/sizes are current
+        self.root.update_idletasks()
+
+        # Dynamically compute the non-scrollable portion height (everything above the areas canvas)
+        try:
+            base_top = self.area_canvas.winfo_rooty() - self.root.winfo_rooty()
+        except Exception:
+            base_top = 210
+        base_height = max(150, base_top + 20)  # add small bottom margin
         min_width = 950
         max_width = 1600
         area_frame_height = 0
         if len(self.areas) > 0:
             self.area_frame.update_idletasks()
             area_frame_height = self.area_frame.winfo_height()
-        # Calculate area height for up to 10 areas
-        visible_area_count = min(10, len(self.areas))
-        area_row_height = 60  # 55 for frame, 5 for padding
-        fixed_canvas_height = visible_area_count * area_row_height
-        # The total height for window (fixed after 10 areas)
-        # If more than 10 areas, cap height strictly to 10 area rows
-        if len(self.areas) > 10:
-            total_height = base_height + fixed_canvas_height
+        # Determine total height needed for all current areas
+        area_row_height = 60  # Approx row height (for fallback)
+        # Number of areas in the scroll field (exclude the Auto Read area at index 0)
+        num_scroll_areas = max(0, len(self.areas) - 1)
+        content_height = area_frame_height if area_frame_height > 0 else num_scroll_areas * area_row_height
+        total_height_unconstrained = base_height + content_height
+        total_height = max(total_height_unconstrained, 250)
+        # Screen-constrained maximum height
+        try:
+            screen_h = self.root.winfo_screenheight()
+        except Exception:
+            screen_h = 1000
+        vertical_margin = 140  # Keep some space from screen edges
+        max_allowed_height = max(300, screen_h - vertical_margin)
+        # Decide if scrollbar should be shown either due to screen limit or explicit row limit (>9)
+        show_scroll_due_to_count = num_scroll_areas > 9
+        show_scroll_due_to_screen = total_height_unconstrained > max_allowed_height
+        show_scroll = show_scroll_due_to_count or show_scroll_due_to_screen
+
+        # Compute target height of the window
+        if show_scroll_due_to_count:
+            # Cap visible rows to 9 when there are more than 9 areas
+            visible_rows = 9
+            # Do not grow the window further when crossing the threshold; keep current height or smaller cap
+            cur_h_for_cap = self.root.winfo_height()
+            desired_height_cap = min(base_height + visible_rows * area_row_height, max_allowed_height)
+            target_height = min(cur_h_for_cap, desired_height_cap)
         else:
-            total_height = base_height + area_frame_height
-        # Never allow window to grow vertically beyond this cap
-        total_height = min(total_height, base_height + 10 * area_row_height)
-        total_height = max(total_height, 250)
+            # Otherwise try to fit all content within the screen
+            target_height = min(total_height_unconstrained, max_allowed_height)
         # Determine the widest area
         widest = min_width
         for area in self.areas:
@@ -2054,26 +3028,34 @@ class GameTextReader:
                 widest = area_width
         widest += 60
         window_width = max(min_width, min(max_width, widest))
-        # Set minimum window size, but never force vertical growth beyond the cap
-        self.root.minsize(window_width, min(total_height, base_height + 5 * area_row_height))
-        # Scrollbar logic
-        if hasattr(self, 'area_scrollbar'):
-            if len(self.areas) > 8:
+        # Apply scrollbar logic based on whether all content fits vertically
+        if hasattr(self, 'area_scrollbar') and hasattr(self, 'area_canvas'):
+            if show_scroll:
+                # Need scrolling
                 self.area_scrollbar.pack(side='right', fill='y')
                 self.area_canvas.configure(yscrollcommand=self.area_scrollbar.set)
-                self.area_canvas.config(height=fixed_canvas_height)
+                if show_scroll_due_to_count:
+                    canvas_height = max(100, min(target_height - base_height, 9 * area_row_height))
+                else:
+                    canvas_height = max(100, target_height - base_height)
+                self.area_canvas.config(height=canvas_height)
             else:
+                # All content fits; no scrollbar
                 self.area_scrollbar.pack_forget()
+                # Expand canvas to show all content when it fits
                 self.area_canvas.config(height=area_frame_height)
-        # Only increase window size if needed, never grow vertically past the cap
+        # Set minimums (use a constant min width so user can resize horizontally).
+        # Ensure minimum width is sufficient to keep the single-line options from truncating.
+        min_required_width = max(min_width, 1087) 
+        self.root.minsize(min_required_width, 250)
+        # Optionally force window geometry (used when loading a layout)
         cur_width = self.root.winfo_width()
         cur_height = self.root.winfo_height()
-        max_height = base_height + 5 * area_row_height
-        if cur_width < window_width or cur_height < total_height:
-            # Always cap the height
-            # self.root.geometry(f"{window_width}x{min(total_height, max_height)}")  # Disabled dynamic resizing
-            pass  # No dynamic resizing, keep window fixed
-        # Window size is now fixed from __init__
+        if force:
+            # To ensure Tk applies the new size reliably even when shrinking, call geometry twice
+            self.root.geometry(f"{window_width}x{target_height}")
+            self.root.update_idletasks()
+            self.root.geometry(f"{window_width}x{target_height}")
 
         self.root.update_idletasks()  # Ensure geometry is applied
 
@@ -2156,7 +3138,22 @@ class GameTextReader:
                     # If this is the Auto Read area, trigger reading immediately and keep button label as 'Select Area'
                     is_auto_read = hasattr(area_name_var, 'get') and area_name_var.get() == "Auto Read"
                     
-                    # Destroy the selection window first to restore normal mouse handling
+                    # Release grabs/bindings before destroying the overlay
+                    try:
+                        select_area_window.grab_release()
+                    except Exception:
+                        pass
+                    try:
+                        self.root.unbind_all("<Escape>")
+                    except Exception:
+                        pass
+                    try:
+                        canvas.unbind("<Button-1>")
+                        canvas.unbind("<B1-Motion>")
+                        canvas.unbind("<Escape>")
+                    except Exception:
+                        pass
+                    # Destroy the selection window to restore normal mouse handling
                     select_area_window.destroy()
                     
                     if is_auto_read:
@@ -2201,7 +3198,22 @@ class GameTextReader:
             if not hasattr(frame, 'area_coords'):
                 frame.area_coords = (0, 0, 0, 0)
             
-            # Destroy the selection window first to restore normal mouse handling
+            # Release grabs/bindings before destroying the overlay
+            try:
+                select_area_window.grab_release()
+            except Exception:
+                pass
+            try:
+                self.root.unbind_all("<Escape>")
+            except Exception:
+                pass
+            try:
+                canvas.unbind("<Button-1>")
+                canvas.unbind("<B1-Motion>")
+                canvas.unbind("<Escape>")
+            except Exception:
+                pass
+            # Destroy the selection window to restore normal mouse handling
             select_area_window.destroy()
             
             # Use our helper method to ensure consistent hotkey restoration
@@ -2260,9 +3272,19 @@ class GameTextReader:
         canvas.bind("<Button-1>", on_click)
         canvas.bind("<Escape>", on_escape)
         select_area_window.bind("<Escape>", on_escape)
+        # Capture Escape at the application level to ensure it works even if focus is lost
+        try:
+            self.root.bind_all("<Escape>", on_escape)
+        except Exception:
+            pass
         
         # Add focus and key bindings
         select_area_window.focus_force()
+        # Grab all events so Escape is reliably received
+        try:
+            select_area_window.grab_set()
+        except Exception:
+            pass
         select_area_window.bind("<FocusOut>", lambda e: select_area_window.focus_force())
         select_area_window.bind("<Key>", lambda e: on_escape(e) if e.keysym == "Escape" else None)
 
@@ -2364,9 +3386,12 @@ class GameTextReader:
     
                 delattr(button, 'keyboard_hook_temp')
             
-            if hasattr(button, 'mouse_hook_temp'):
-    
-                delattr(button, 'mouse_hook_temp')
+                if hasattr(button, 'mouse_hook_temp'):
+                    try:
+                        mouse.unhook(button.mouse_hook_temp)
+                    except Exception:
+                        pass
+                    delattr(button, 'mouse_hook_temp')
             
             self.disable_all_hotkeys()
         except Exception as e:
@@ -2381,19 +3406,233 @@ class GameTextReader:
                 self.restore_all_hotkeys()
             except Exception as e:
                 print(f"Warning: Error restoring hotkeys: {e}")
+            # Stop live preview updater if running
+            try:
+                if hasattr(self, '_hotkey_preview_job') and self._hotkey_preview_job:
+                    self.root.after_cancel(self._hotkey_preview_job)
+                    self._hotkey_preview_job = None
+            except Exception:
+                pass
+
+        # Track whether a non-modifier key was pressed during capture (to distinguish bare modifiers)
+        combo_state = {'non_modifier_pressed': False}
+
+        # Live preview of currently held modifiers while waiting for a non-modifier key
+        def _update_hotkey_preview():
+            if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                return
+            try:
+                mods = []
+                if keyboard.is_pressed('left ctrl'): mods.append('L-CTRL')
+                if keyboard.is_pressed('right ctrl'): mods.append('R-CTRL')
+                if keyboard.is_pressed('shift'): mods.append('SHIFT')
+                if keyboard.is_pressed('left alt'): mods.append('L-ALT')
+                if keyboard.is_pressed('right alt'): mods.append('R-ALT')
+                if keyboard.is_pressed('left windows') or keyboard.is_pressed('right windows') or keyboard.is_pressed('windows'):
+                    mods.append('WIN')
+                preview = " + ".join(mods)
+                if preview:
+                    button.config(text=f"Set Hotkey: [ {preview} + ]")
+                else:
+                    button.config(text=f"Set Hotkey: [  ]")
+            except Exception:
+                pass
+            # Schedule next update
+            try:
+                self._hotkey_preview_job = self.root.after(80, _update_hotkey_preview)
+            except Exception:
+                pass
 
         def on_key_press(event):
             if self._hotkey_assignment_cancelled or not self.setting_hotkey:
                 return
-            
-            # Always ignore Escape key
-            if event.scan_code == 1:  # Escape key
+            # Ignore Escape
+            if event.scan_code == 1:
                 return
-            
-            key_name = event.name
+            # Normalize key name and detect side for modifiers (handles localized names)
+            raw_name = (event.name or '').lower()
+            side = None
+            # Detect side hints
+            if any(s in raw_name for s in ["right", "høyre", "rechts", "derecha", "droite", "destra", "dereito", "höger"]):
+                side = 'right'
+            if any(s in raw_name for s in ["left", "venstre", "links", "izquierda", "gauche", "sinistra", "esquerda", "vänster"]):
+                side = 'left'
+            # Base modifier detection
+            base = None
+            if any(x in raw_name for x in ["ctrl", "control", "strg"]):
+                base = 'ctrl'
+            elif any(x in raw_name for x in ["altgr", "option", "menu"]) or raw_name.strip() == 'alt':
+                base = 'alt'
+            elif any(x in raw_name for x in ["shift", "skift", "umschalt"]):
+                base = 'shift'
+            elif any(x in raw_name for x in ["windows", "win", "super", "meta", "cmd", "command", "lwin", "rwin"]):
+                base = 'windows'
+            # Compose canonical name for modifier or keep raw for normal keys
+            if base:
+                if base in ('ctrl','alt'):
+                    name = f"{side or 'left'} {base}"  # default to left when side unknown
+                elif base in ('shift','windows'):
+                    name = base
+                else:
+                    name = base
+            else:
+                name = raw_name
+
+            # Mark that a non-modifier was pressed
+            if name not in ('ctrl','left ctrl','right ctrl','alt','left alt','right alt','shift','windows'):
+                combo_state['non_modifier_pressed'] = True
+            if name in ('ctrl', 'shift', 'alt', 'windows'):
+                # Allow assigning a bare modifier when released, if user doesn't press another key
+                # Start a short timer to check if still only this modifier is held
+                def _assign_bare_modifier():
+                    if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                        return
+                    try:
+                        held = []
+                        if keyboard.is_pressed('left ctrl'): held.append('left ctrl')
+                        if keyboard.is_pressed('right ctrl'): held.append('right ctrl')
+                        if keyboard.is_pressed('shift'): held.append('shift')
+                        if keyboard.is_pressed('left alt'): held.append('left alt')
+                        if keyboard.is_pressed('right alt'): held.append('right alt')
+                        if keyboard.is_pressed('left windows') or keyboard.is_pressed('right windows') or keyboard.is_pressed('windows'):
+                            held.append('windows')
+                        # Only proceed if exactly one modifier is still held and matches side/base
+                        if len(held) == 1:
+                            only = held[0]
+                            # Accept if same base and, when available, same side
+                            if (base == 'ctrl' and (only in ['left ctrl','right ctrl'])) or \
+                               (base == 'alt' and (only in ['left alt','right alt'])) or \
+                               (base == 'shift' and only == 'shift') or \
+                               (base == 'windows' and only == 'windows'):
+                                key_name = only
+                            else:
+                                return
+
+                            # Prevent duplicates: Stop hotkey
+                            if getattr(self, 'stop_hotkey', None) == key_name:
+                                self.setting_hotkey = False
+                                self._hotkey_assignment_cancelled = True
+                                try:
+                                    if hasattr(button, 'keyboard_hook_temp'):
+                                        keyboard.unhook(button.keyboard_hook_temp)
+                                        delattr(button, 'keyboard_hook_temp')
+                                    if hasattr(button, 'mouse_hook_temp'):
+                                        mouse.unhook(button.mouse_hook_temp)
+                                        delattr(button, 'mouse_hook_temp')
+                                except Exception:
+                                    pass
+                                finish_hotkey_assignment()
+                                try:
+                                    messagebox.showwarning("Hotkey In Use", "This hotkey is already assigned to: Stop Hotkey")
+                                except Exception:
+                                    pass
+                                return
+
+                            # Prevent duplicates: other areas
+                            for area in self.areas:
+                                if area[1] is not button and hasattr(area[1], 'hotkey') and area[1].hotkey == key_name:
+                                    self.setting_hotkey = False
+                                    self._hotkey_assignment_cancelled = True
+                                    try:
+                                        if hasattr(button, 'keyboard_hook_temp'):
+                                            keyboard.unhook(button.keyboard_hook_temp)
+                                            delattr(button, 'keyboard_hook_temp')
+                                        if hasattr(button, 'mouse_hook_temp'):
+                                            mouse.unhook(button.mouse_hook_temp)
+                                            delattr(button, 'mouse_hook_temp')
+                                    except Exception:
+                                        pass
+                                    finish_hotkey_assignment()
+                                    area_name = area[3].get() if hasattr(area[3], 'get') else "Unknown Area"
+                                    show_thinkr_warning(self, area_name)
+                                    return
+
+                            button.hotkey = key_name
+                            # Display mapping
+                            disp = key_name.upper().replace('LEFT CTRL','L-CTRL').replace('RIGHT CTRL','R-CTRL') \
+                                                .replace('LEFT ALT','L-ALT').replace('RIGHT ALT','R-ALT') \
+                                                .replace('WINDOWS','WIN')
+                            display_name = disp
+                            button.config(text=f"Set Hotkey: [ {display_name} ]")
+                            self.setup_hotkey(button, area_frame)
+                            # Cleanup temp hooks and preview
+                            try:
+                                if hasattr(button, 'keyboard_hook_temp'):
+                                    keyboard.unhook(button.keyboard_hook_temp)
+                                    delattr(button, 'keyboard_hook_temp')
+                                if hasattr(button, 'mouse_hook_temp'):
+                                    mouse.unhook(button.mouse_hook_temp)
+                                    delattr(button, 'mouse_hook_temp')
+                            except Exception:
+                                pass
+                            finish_hotkey_assignment()
+                            self.setting_hotkey = False
+                            return
+                    except Exception:
+                        pass
+                # Delay a bit to allow combination keys; if user presses another key quickly, normal path will handle it
+                try:
+                    self.root.after(200, _assign_bare_modifier)
+                except Exception:
+                    pass
+                return
+
+            # Build combination string from held modifiers + key
+            try:
+                mods = []
+                if keyboard.is_pressed('left ctrl'): mods.append('left ctrl')
+                if keyboard.is_pressed('right ctrl'): mods.append('right ctrl')
+                if keyboard.is_pressed('shift'): mods.append('shift')
+                if keyboard.is_pressed('left alt'): mods.append('left alt')
+                if keyboard.is_pressed('right alt'): mods.append('right alt')
+                if keyboard.is_pressed('left windows') or keyboard.is_pressed('right windows') or keyboard.is_pressed('windows'):
+                    mods.append('windows')
+            except Exception:
+                mods = []
+
+            # Determine base key (support numpad keys explicitly)
+            base_key = name
             if event.scan_code in self.numpad_scan_codes:
-                key_name = f"num_{self.numpad_scan_codes[event.scan_code]}"
-            
+                sym = self.numpad_scan_codes[event.scan_code]
+                base_key = f"numpad {sym}"
+
+            # If base_key itself is a modifier, include it if not already in mods; otherwise avoid duplicate
+            if base_key in ("ctrl", "shift", "alt", "windows", "left ctrl", "right ctrl", "left alt", "right alt"):
+                combo_parts = (mods + [base_key]) if base_key not in mods else mods[:]
+            else:
+                combo_parts = mods + [base_key]
+            key_name = "+".join(p for p in combo_parts if p)
+
+            # Prevent duplicates against Stop hotkey
+            if getattr(self, 'stop_hotkey', None) == key_name:
+                # Unhook temp hooks and set flags BEFORE showing the warning
+                self.setting_hotkey = False
+                self._hotkey_assignment_cancelled = True
+                if hasattr(button, 'keyboard_hook_temp'):
+                    try:
+                        keyboard.unhook(button.keyboard_hook_temp)
+                    except Exception:
+                        pass
+                    delattr(button, 'keyboard_hook_temp')
+                if hasattr(button, 'mouse_hook_temp'):
+                    try:
+                        mouse.unhook(button.mouse_hook_temp)
+                    except Exception:
+                        pass
+                    delattr(button, 'mouse_hook_temp')
+                finish_hotkey_assignment()
+                try:
+                    messagebox.showwarning("Hotkey In Use", "This hotkey is already assigned to: Stop Hotkey")
+                except Exception:
+                    pass
+                # Reset label text
+                if hasattr(button, 'hotkey') and button.hotkey:
+                    disp_prev = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
+                    button.config(text=f"Set Hotkey: [ {disp_prev.upper()} ]")
+                else:
+                    button.config(text="Set Hotkey")
+                return
+
             # Disallow duplicate hotkeys
             duplicate_found = False
             for area in self.areas:
@@ -2407,18 +3646,22 @@ class GameTextReader:
                 self.setting_hotkey = False
                 self._hotkey_assignment_cancelled = True  # Block all further events
                 if hasattr(button, 'keyboard_hook_temp'):
-    
-                    keyboard.unhook(button.keyboard_hook_temp)
+                    try:
+                        keyboard.unhook(button.keyboard_hook_temp)
+                    except Exception:
+                        pass
                     delattr(button, 'keyboard_hook_temp')
                 if hasattr(button, 'mouse_hook_temp'):
-    
-                    mouse.unhook(button.mouse_hook_temp)
+                    try:
+                        mouse.unhook(button.mouse_hook_temp)
+                    except Exception:
+                        pass
                     delattr(button, 'mouse_hook_temp')
                 finish_hotkey_assignment()
                 # Now show the warning dialog (no hooks are active)
                 if hasattr(button, 'hotkey'):
                     display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
-                    button.config(text=f"Set Hotkey: [ {display_name} ]")
+                    button.config(text=f"Set Hotkey: [ {display_name.upper()} ]")
                 else:
                     button.config(text="Set Hotkey")
                 # Find the area name that's using this hotkey
@@ -2433,20 +3676,29 @@ class GameTextReader:
             # Only proceed with setting hotkey if no duplicate was found
 
             button.hotkey = key_name
-            display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
-            button.config(text=f"Set Hotkey: [ {display_name} ]")
+            # Display: make NUMPAD look nice and uppercase
+            # Display nicer labels for sided modifiers
+            display_name = key_name.replace('numpad ', 'NUMPAD ').replace('num_', 'num:') \
+                                 .replace('left ctrl','L-CTRL').replace('right ctrl','R-CTRL') \
+                                 .replace('left alt','L-ALT').replace('right alt','R-ALT') \
+                                 .replace('windows','WIN')
+            button.config(text=f"Set Hotkey: [ {display_name.upper()} ]")
 
             self.setup_hotkey(button, area_frame)
             self.setting_hotkey = False
 
             # Unhook both temp hooks if they exist
             if hasattr(button, 'keyboard_hook_temp'):
-
-                keyboard.unhook(button.keyboard_hook_temp)
+                try:
+                    keyboard.unhook(button.keyboard_hook_temp)
+                except Exception:
+                    pass
                 delattr(button, 'keyboard_hook_temp')
             if hasattr(button, 'mouse_hook_temp'):
-
-                mouse.unhook(button.mouse_hook_temp)
+                try:
+                    mouse.unhook(button.mouse_hook_temp)
+                except Exception:
+                    pass
                 delattr(button, 'mouse_hook_temp')
 
             finish_hotkey_assignment()
@@ -2459,7 +3711,7 @@ class GameTextReader:
 
             button.hotkey = key_name
             display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
-            button.config(text=f"Set Hotkey: [ {display_name} ]")
+            button.config(text=f"Set Hotkey: [ {display_name.upper()} ]")
 
             self.setup_hotkey(button, area_frame)
             self.setting_hotkey = False
@@ -2482,7 +3734,7 @@ class GameTextReader:
 
             button.hotkey = key_name
             display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
-            button.config(text=f"Set Hotkey: [ {display_name} ]")
+            button.config(text=f"Set Hotkey: [ {display_name.upper()} ]")
 
             self.setup_hotkey(button, area_frame)
             self.setting_hotkey = False
@@ -2568,7 +3820,7 @@ class GameTextReader:
                     show_thinkr_warning(self, area_name_var2.get())
                     if hasattr(button, 'hotkey'):
                         display_name = button.hotkey.replace('num_', 'num:') if button.hotkey.startswith('num_') else button.hotkey
-                        button.config(text=f"Set Hotkey: [ {display_name} ]")
+                        button.config(text=f"Set Hotkey: [ {display_name.upper()} ]")
                     else:
                         button.config(text="Set Hotkey")
                     return
@@ -2576,7 +3828,7 @@ class GameTextReader:
             # Set the new hotkey
             button.hotkey = key_name
             display_name = key_name.replace('num_', 'num:') if key_name.startswith('num_') else key_name
-            button.config(text=f"Set Hotkey: [ {display_name} ]")
+            button.config(text=f"Set Hotkey: [ {display_name.upper()} ]")
             
             # Setup the hotkey
             self.setup_hotkey(button, area_frame)
@@ -2597,7 +3849,14 @@ class GameTextReader:
         # Clean up previous hooks
         if hasattr(button, 'keyboard_hook'):
             try:
-                keyboard.unhook(button.keyboard_hook)
+                # button.keyboard_hook from keyboard.add_hotkey returns an id; prefer remove_hotkey
+                try:
+                    keyboard.remove_hotkey(button.keyboard_hook)
+                except Exception:
+                    try:
+                        keyboard.unhook(button.keyboard_hook)
+                    except Exception:
+                        pass
                 delattr(button, 'keyboard_hook')
             except Exception as e:
                 print(f"Error cleaning up keyboard hook: {e}")
@@ -2611,6 +3870,103 @@ class GameTextReader:
         self.setting_hotkey = True  # Enable hotkey assignment mode before installing hooks
         button.keyboard_hook_temp = keyboard.on_press(on_key_press)
         button.mouse_hook_temp = mouse.hook(on_mouse_click)
+
+        # Also listen for Shift key release to allow assigning bare SHIFT reliably
+        def on_shift_release(_e):
+            if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                return
+            if combo_state.get('non_modifier_pressed'):
+                return
+            # Determine which shift key was released from event name if available
+            side_label = 'left'
+            try:
+                raw = (getattr(_e, 'name', '') or '').lower()
+                if 'right' in raw or 'right shift' in raw:
+                    side_label = 'right'
+            except Exception:
+                pass
+            # Assign bare sided SHIFT
+            key_name = f"{side_label} shift"
+            # Prevent duplicates: Stop hotkey
+            if getattr(self, 'stop_hotkey', None) == key_name:
+                # Cleanup temp hooks and end assignment with warning
+                try:
+                    if hasattr(button, 'keyboard_hook_temp'):
+                        keyboard.unhook(button.keyboard_hook_temp)
+                        delattr(button, 'keyboard_hook_temp')
+                    if hasattr(button, 'mouse_hook_temp'):
+                        mouse.unhook(button.mouse_hook_temp)
+                        delattr(button, 'mouse_hook_temp')
+                    if hasattr(button, 'shift_release_hooks'):
+                        for h in button.shift_release_hooks:
+                            try:
+                                keyboard.unhook(h)
+                            except Exception:
+                                pass
+                        delattr(button, 'shift_release_hooks')
+                except Exception:
+                    pass
+                self.setting_hotkey = False
+                finish_hotkey_assignment()
+                try:
+                    messagebox.showwarning("Hotkey In Use", "This hotkey is already assigned to: Stop Hotkey")
+                except Exception:
+                    pass
+                return
+            # Prevent duplicates: other areas
+            for area in self.areas:
+                if area[1] is not button and hasattr(area[1], 'hotkey') and area[1].hotkey == key_name:
+                    try:
+                        if hasattr(button, 'keyboard_hook_temp'):
+                            keyboard.unhook(button.keyboard_hook_temp)
+                            delattr(button, 'keyboard_hook_temp')
+                        if hasattr(button, 'mouse_hook_temp'):
+                            mouse.unhook(button.mouse_hook_temp)
+                            delattr(button, 'mouse_hook_temp')
+                        if hasattr(button, 'shift_release_hooks'):
+                            for h in button.shift_release_hooks:
+                                try:
+                                    keyboard.unhook(h)
+                                except Exception:
+                                    pass
+                            delattr(button, 'shift_release_hooks')
+                    except Exception:
+                        pass
+                    self.setting_hotkey = False
+                    finish_hotkey_assignment()
+                    area_name = area[3].get() if hasattr(area[3], 'get') else "Unknown Area"
+                    show_thinkr_warning(self, area_name)
+                    return
+            button.hotkey = key_name
+            button.config(text=f"Set Hotkey: [ {'L-SHIFT' if side_label=='left' else 'R-SHIFT'} ]")
+            self.setup_hotkey(button, area_frame)
+            # Clean up temp hooks (keyboard/mouse/shift release hooks)
+            try:
+                if hasattr(button, 'keyboard_hook_temp'):
+                    keyboard.unhook(button.keyboard_hook_temp)
+                    delattr(button, 'keyboard_hook_temp')
+                if hasattr(button, 'mouse_hook_temp'):
+                    mouse.unhook(button.mouse_hook_temp)
+                    delattr(button, 'mouse_hook_temp')
+                if hasattr(button, 'shift_release_hooks'):
+                    for h in button.shift_release_hooks:
+                        try:
+                            keyboard.unhook(h)
+                        except Exception:
+                            pass
+                    delattr(button, 'shift_release_hooks')
+            except Exception:
+                pass
+            self.setting_hotkey = False
+            finish_hotkey_assignment()
+
+        try:
+            button.shift_release_hooks = [
+                keyboard.on_release_key('left shift', on_shift_release),
+                keyboard.on_release_key('right shift', on_shift_release),
+            ]
+        except Exception:
+            button.shift_release_hooks = []
         
         # Set 3-second timeout for hotkey setting
         def unhook_mouse():
@@ -2618,9 +3974,11 @@ class GameTextReader:
                 # Safely clean up mouse hook
                 if hasattr(button, 'mouse_hook_temp') and button.mouse_hook_temp is not None:
                     try:
-                        # Check if the hook is still active before trying to remove it
-                        if button.mouse_hook_temp in mouse._listener.codes_to_funcs.get(0, []):
+                        # Best-effort unhook if possible
+                        try:
                             mouse.unhook(button.mouse_hook_temp)
+                        except Exception:
+                            pass
                     except Exception as e:
                         print(f"Warning: Error unhooking mouse: {e}")
                     finally:
@@ -2640,6 +3998,16 @@ class GameTextReader:
                         # Always clean up the attribute to prevent memory leaks
                         if hasattr(button, 'keyboard_hook_temp'):
                             delattr(button, 'keyboard_hook_temp')
+                # Clean up shift release hooks
+                if hasattr(button, 'shift_release_hooks'):
+                    try:
+                        for h in button.shift_release_hooks:
+                            try:
+                                keyboard.unhook(h)
+                            except Exception:
+                                pass
+                    finally:
+                        delattr(button, 'shift_release_hooks')
                 
                 self.setting_hotkey = False
                 self._hotkey_assignment_cancelled = True
@@ -3039,8 +4407,12 @@ class GameTextReader:
                     self.setup_hotkey(self.stop_hotkey_button.mock_button, None)  # Pass None as area_frame for stop hotkey
                     
                     # Update the button text
-                    display_name = saved_stop_hotkey.replace('num_', 'num:') if saved_stop_hotkey.startswith('num_') else saved_stop_hotkey
-                    self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name} ]")
+                    display_name = saved_stop_hotkey.replace('numpad ', 'NUMPAD ').replace('num_', 'num:') \
+                                               .replace('left ctrl','L-CTRL').replace('right ctrl','R-CTRL') \
+                                               .replace('left alt','L-ALT').replace('right alt','R-ALT') \
+                                               .replace('left shift','L-SHIFT').replace('right shift','R-SHIFT') \
+                                               .replace('windows','WIN')
+                    self.stop_hotkey_button.config(text=f"Stop Hotkey: [ {display_name.upper()} ]")
                     print(f"Loaded Stop hotkey: {saved_stop_hotkey}")
 
                 # --- Handle Auto Read hotkey ---
@@ -3077,13 +4449,19 @@ class GameTextReader:
                     if area_info["hotkey"]:
                         hotkey_button.hotkey = area_info["hotkey"]
                         display_name = area_info["hotkey"].replace('num_', 'num:') if area_info["hotkey"].startswith('num_') else area_info["hotkey"]
-                        hotkey_button.config(text=f"Hotkey: [ {display_name} ]")
+                        hotkey_button.config(text=f"Hotkey: [ {display_name.upper()} ]")
                         self.setup_hotkey(hotkey_button, area_frame)
                     
                     # Set preprocessing and voice settings
                     preprocess_var.set(area_info.get("preprocess", False))
-                    if area_info.get("voice") in [voice.name for voice in self.voices]:
-                        voice_var.set(area_info["voice"])
+                    # Check if the saved voice exists in current SAPI voices
+                    if hasattr(self, 'voices') and self.voices:
+                        try:
+                            current_voice_names = [voice.GetDescription() for voice in self.voices]
+                            if area_info.get("voice") in current_voice_names:
+                                voice_var.set(area_info["voice"])
+                        except Exception as e:
+                            print(f"Warning: Could not validate voice: {e}")
                     speed_var.set(area_info.get("speed", "1.0"))
                     
                     # Load and store image processing settings
@@ -3091,30 +4469,30 @@ class GameTextReader:
                         self.processing_settings[area_info["name"]] = area_info["settings"].copy()
                         print(f"Loaded image processing settings for area: {area_info['name']}")
                         
-                    # Update window size after loading each area
-                    self.resize_window()
-                    
-                    # Get coordinates from the loaded area
-                    x1, y1, x2, y2 = area_frame.area_coords
-                    screenshot = capture_screen_area(x1, y1, x2, y2)
-                    
-                    # Store original or processed image based on settings
-                    if preprocess_var.get() and area_info["name"] in self.processing_settings:
-                        settings = self.processing_settings[area_info["name"]]
-                        processed_image = preprocess_image(
-                            screenshot,
-                            brightness=settings.get('brightness', 1.0),
-                            contrast=settings.get('contrast', 1.0),
-                            saturation=settings.get('saturation', 1.0),
-                            sharpness=settings.get('sharpness', 1.0),
-                            blur=settings.get('blur', 0.0),
-                            threshold=settings.get('threshold', None) if settings.get('threshold_enabled', False) else None,
-                            hue=settings.get('hue', 0.0),
-                            exposure=settings.get('exposure', 1.0)
-                        )
-                        self.latest_images[area_name_var.get()] = processed_image
-                    else:
-                        self.latest_images[area_name_var.get()] = screenshot
+                # Update preferred sizes during load
+                self.resize_window()
+
+                # Get coordinates from the loaded area
+                x1, y1, x2, y2 = area_frame.area_coords
+                screenshot = capture_screen_area(x1, y1, x2, y2)
+
+                # Store original or processed image based on settings
+                if preprocess_var.get() and area_info["name"] in self.processing_settings:
+                    settings = self.processing_settings[area_info["name"]]
+                    processed_image = preprocess_image(
+                        screenshot,
+                        brightness=settings.get('brightness', 1.0),
+                        contrast=settings.get('contrast', 1.0),
+                        saturation=settings.get('saturation', 1.0),
+                        sharpness=settings.get('sharpness', 1.0),
+                        blur=settings.get('blur', 0.0),
+                        threshold=settings.get('threshold', None) if settings.get('threshold_enabled', False) else None,
+                        hue=settings.get('hue', 0.0),
+                        exposure=settings.get('exposure', 1.0)
+                    )
+                    self.latest_images[area_name_var.get()] = processed_image
+                else:
+                    self.latest_images[area_name_var.get()] = screenshot
                 # --- Handle Auto Read hotkey state after loading ---
                 # If no conflict and auto-read hotkey exists, re-register it
                 if not conflict_area_name and auto_read_hotkey and self.areas and hasattr(self.areas[0][1], 'hotkey'):
@@ -3122,7 +4500,7 @@ class GameTextReader:
                         # Re-register the auto-read hotkey
                         self.areas[0][1].hotkey = auto_read_hotkey
                         display_name = auto_read_hotkey.replace('num_', 'num:') if auto_read_hotkey.startswith('num_') else auto_read_hotkey
-                        self.areas[0][1].config(text=f"Hotkey: [ {display_name} ]")
+                        self.areas[0][1].config(text=f"Hotkey: [ {display_name.upper()} ]")
                         # Re-setup the hotkey
                         self.setup_hotkey(self.areas[0][1], self.areas[0][0])
                         print(f"Re-registered Auto Read hotkey: {auto_read_hotkey}")
@@ -3146,8 +4524,8 @@ class GameTextReader:
 
                 print(f"Layout loaded from {file_path}\n--------------------------")
                 
-                # Automatically resize the window
-                self.resize_window()
+                # Force-resize the window to fit the newly loaded layout
+                self.resize_window(force=True)
                 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load layout: {str(e)}")
@@ -3175,53 +4553,51 @@ class GameTextReader:
                 
             print(f"Setting up hotkey for: {button.hotkey}")
             
-            # Define the keyboard hotkey handler
-            def on_hotkey(e):
+            # Define the hotkey handler function (accept optional event for keyboard lib compatibility)
+            def hotkey_handler(event=None, *args, **kwargs):
                 try:
                     if self.setting_hotkey:
-                        return False
+                        return
+                    # If this is a single-key hotkey (no '+') and not a pure modifier, ignore when any modifier is held
+                    try:
+                        hk = getattr(button, 'hotkey', '') or ''
+                        if '+' not in hk and hk not in ['ctrl','left ctrl','right ctrl','alt','left alt','right alt','shift','left shift','right shift','windows']:
+                            if (keyboard.is_pressed('left ctrl') or keyboard.is_pressed('right ctrl') or
+                                keyboard.is_pressed('shift') or keyboard.is_pressed('left alt') or
+                                keyboard.is_pressed('right alt') or keyboard.is_pressed('left windows') or
+                                keyboard.is_pressed('right windows') or keyboard.is_pressed('windows')):
+                                return
+                    except Exception:
+                        pass
                         
-                    # Handle keyboard hotkeys
-                    if not button.hotkey.startswith('button'):
-                        # Handle numpad keys
-                        if button.hotkey.startswith('num_'):
-                            key_name = button.hotkey.replace('num_', '')
-                            if not (e.name == key_name and e.scan_code in self.numpad_scan_codes):
-                                return False
-                        # Handle regular keys
-                        elif e.name != button.hotkey:
-                            return False
-                            
-                        # Handle stop button
-                        if hasattr(button, 'is_stop_button'):
-                            self.root.after_idle(self.stop_speaking)
-                            return True
-                            
-                        # Handle Auto Read area
-                        area_info = self._get_area_info(button)
-                        if area_info and area_info.get('name') == "Auto Read":
-                            self.root.after_idle(lambda: self.set_area(
-                                area_info['frame'], 
-                                area_info['name_var'], 
-                                area_info['set_area_btn']))
-                            return True
-                            
-                        # Prevent multiple rapid triggers
-                        if hasattr(button, '_is_processing') and button._is_processing:
-                            return True
-                            
-                        button._is_processing = True
-                        self.stop_speaking()
-                        threading.Thread(
-                            target=self.read_area, 
-                            args=(button.area_frame,), 
-                            daemon=True
-                        ).start()
-                        self.root.after(100, lambda: setattr(button, '_is_processing', False))
-                        return True
+                    # Handle stop button
+                    if hasattr(button, 'is_stop_button'):
+                        self.root.after_idle(self.stop_speaking)
+                        return
+                        
+                    # Handle Auto Read area
+                    area_info = self._get_area_info(button)
+                    if area_info and area_info.get('name') == "Auto Read":
+                        self.root.after_idle(lambda: self.set_area(
+                            area_info['frame'], 
+                            area_info['name_var'], 
+                            area_info['set_area_btn']))
+                        return
+                        
+                    # Prevent multiple rapid triggers
+                    if hasattr(button, '_is_processing') and button._is_processing:
+                        return
+                        
+                    button._is_processing = True
+                    self.stop_speaking()
+                    threading.Thread(
+                        target=self.read_area, 
+                        args=(button.area_frame,), 
+                        daemon=True
+                    ).start()
+                    self.root.after(100, lambda: setattr(button, '_is_processing', False))
                 except Exception as e:
-                    print(f"Error in on_hotkey: {e}")
-                return False
+                    print(f"Error in hotkey_handler: {e}")
                 
             # Define the mouse click handler
             def on_mouse_click(event):
@@ -3277,11 +4653,135 @@ class GameTextReader:
                     return False
             else:
                 try:
-                    button.keyboard_hook = keyboard.on_press(on_hotkey)
-                    print(f"Keyboard hook set up for {button.hotkey}")
+                    # Use low-level hook for numpad keys to avoid mis-triggers from function keys
+                    hotkey_str = button.hotkey
+                    num_key = None
+                    pure_modifier = hotkey_str in ['left ctrl','right ctrl','left alt','right alt','shift','left shift','right shift','windows']
+                    if pure_modifier:
+                        # Use low-level hook and normalize event names to match exact sided modifiers
+                        def on_kb_event_mod(e):
+                            try:
+                                if getattr(e, 'event_type', None) != 'down' or self.setting_hotkey or getattr(self, 'hotkeys_disabled_for_selection', False):
+                                    return
+                                raw = (getattr(e, 'name', '') or '').lower()
+                                side = None
+                                if any(s in raw for s in ["right", "høyre", "rechts", "derecha", "droite", "destra", "dereito", "höger"]):
+                                    side = 'right'
+                                if any(s in raw for s in ["left", "venstre", "links", "izquierda", "gauche", "sinistra", "esquerda", "vänster"]):
+                                    side = 'left'
+                                base = None
+                                if any(x in raw for x in ["ctrl", "control", "strg"]):
+                                    base = 'ctrl'
+                                elif any(x in raw for x in ["altgr", "option", "menu"]) or raw.strip() == 'alt':
+                                    base = 'alt'
+                                elif any(x in raw for x in ["shift", "skift", "umschalt"]):
+                                    base = 'shift'
+                                elif any(x in raw for x in ["windows", "win", "super", "meta", "cmd", "command", "lwin", "rwin"]):
+                                    base = 'windows'
+                                # For Shift, infer side by scan_code if not in the raw name
+                                if base == 'shift' and not side:
+                                    sc = getattr(e, 'scan_code', None)
+                                    if sc == 42:
+                                        side = 'left'
+                                    elif sc == 54:
+                                        side = 'right'
+                                name_ev = (
+                                    f"{side or 'left'} {base}" if base in ('ctrl','alt','shift')
+                                    else (base or raw)
+                                )
+                                if name_ev == hotkey_str:
+                                    hotkey_handler()
+                            except Exception:
+                                pass
+                        button.keyboard_hook = keyboard.hook(on_kb_event_mod)
+                        button.keyboard_hook_is_lowlevel = True
+                        button._hotkey_callback = hotkey_handler
+                        print(f"Keyboard low-level sided modifier hook set up for {hotkey_str}")
+                        return True
+                    if hotkey_str.startswith('num_'):
+                        num_key = hotkey_str.replace('num_', '')
+                        # Map to scancode
+                        try:
+                            num_scancode = next(sc for sc, sym in self.numpad_scan_codes.items() if sym == num_key)
+                        except StopIteration:
+                            num_scancode = None
+
+                        if num_scancode is not None:
+                            def on_kb_event(e):
+                                try:
+                                    if (getattr(e, 'event_type', None) == 'down' and
+                                        getattr(e, 'scan_code', None) == num_scancode and
+                                        not self.setting_hotkey and
+                                        not getattr(self, 'hotkeys_disabled_for_selection', False)):
+                                        # Ignore when modifier keys are held to prevent false triggers
+                                        try:
+                                            if (keyboard.is_pressed('ctrl') or
+                                                keyboard.is_pressed('alt') or
+                                                keyboard.is_pressed('shift') or
+                                                keyboard.is_pressed('windows')):
+                                                return
+                                        except Exception:
+                                            pass
+                                        hotkey_handler()
+                                except Exception:
+                                    pass
+                            button.keyboard_hook = keyboard.hook(on_kb_event)
+                            button.keyboard_hook_is_lowlevel = True
+                            print(f"Keyboard low-level hook set up for numpad scancode {num_scancode}")
+                        else:
+                            # Fallback to string hotkey if scancode not found
+                            button.keyboard_hook = keyboard.add_hotkey(hotkey_str, hotkey_handler, suppress=False)
+                            print(f"Keyboard hotkey set up for {hotkey_str}")
+                    else:
+                        # Non-numpad hotkeys use add_hotkey
+                        button.keyboard_hook = keyboard.add_hotkey(hotkey_str, hotkey_handler, suppress=False)
+                        print(f"Keyboard hotkey set up for {hotkey_str}")
+
+                    # Store handler for potential fallback
+                    button._hotkey_callback = hotkey_handler
+
+                    # Start polling fallback for numpad keys for fullscreen robustness
+                    try:
+                        if num_key is not None:
+                            vk = self.numpad_vk_codes.get(num_key)
+                            if vk is not None:
+                                self._start_numpad_fallback(button, vk, hotkey_handler)
+                    except Exception as _e:
+                        pass
+                    
+                    # Test if the hotkey is working by trying to register it again
+                    # If it fails, it means the hotkey is already registered and working
+                    try:
+                        test_hook = keyboard.add_hotkey(hotkey_str, lambda: None, suppress=False)
+                        keyboard.remove_hotkey(hotkey_str)
+                        print(f"Hotkey {hotkey_str} is working properly")
+                        
+                        # Show status message for successful hotkey setup
+                        if hasattr(self, 'status_label'):
+                            self.status_label.config(text=f"Hotkey '{hotkey_str}' set successfully")
+                            if hasattr(self, '_feedback_timer') and self._feedback_timer:
+                                self.root.after_cancel(self._feedback_timer)
+                            self._feedback_timer = self.root.after(3000, lambda: self.status_label.config(text=""))
+                            
+                    except Exception as test_e:
+                        print(f"Warning: Hotkey {hotkey_str} might not work in all applications: {test_e}")
+                        # Show warning message
+                        if hasattr(self, 'status_label'):
+                            self.status_label.config(text=f"Warning: Hotkey '{hotkey_str}' may not work in all applications")
+                            if hasattr(self, '_feedback_timer') and self._feedback_timer:
+                                self.root.after_cancel(self._feedback_timer)
+                            self._feedback_timer = self.root.after(5000, lambda: self.status_label.config(text=""))
+                        
                 except Exception as e:
-                    print(f"Error setting up keyboard hook: {e}")
-                    return False
+                    print(f"Error setting up keyboard hotkey: {e}")
+                    # Try alternative method for problematic hotkeys
+                    try:
+                        print(f"Trying alternative hotkey method for {button.hotkey}")
+                        button.keyboard_hook = keyboard.on_press(hotkey_handler)
+                        print(f"Alternative keyboard hook set up for {button.hotkey}")
+                    except Exception as alt_e:
+                        print(f"Alternative method also failed: {alt_e}")
+                        return False
                     
             return True
             
@@ -3292,38 +4792,82 @@ class GameTextReader:
     def _cleanup_hooks(self, button):
         """Helper method to clean up existing hooks for a button"""
         try:
+            # Stop any fullscreen fallback polling
+            try:
+                self._stop_numpad_fallback(button)
+            except Exception:
+                pass
             # Clean up mouse hook if it exists
             if hasattr(button, 'mouse_hook'):
                 try:
-                    # Check if the hook is still in the mouse handlers list
-                    if button.mouse_hook in mouse._listener.handlers:
+                    # mouse._listener may be None or missing; guard access
+                    handlers = getattr(getattr(mouse, '_listener', None), 'handlers', None)
+                    if handlers is not None and button.mouse_hook in handlers:
                         mouse.unhook(button.mouse_hook)
-                    delattr(button, 'mouse_hook')
-                except AttributeError as e:
-                    # Handle case where _listener or handlers don't exist
-                    print(f"Warning: Could not clean up mouse hook: {e}")
-                except ValueError as e:
-                    # Handle case where hook was already removed
-                    print(f"Mouse hook already removed: {e}")
                 except Exception as e:
-                    print(f"Unexpected error cleaning up mouse hook: {e}")
-                    # Ensure we still remove the attribute even if unhooking fails
-                    if hasattr(button, 'mouse_hook'):
+                    # Swallow any unhook errors; we'll just remove the attribute
+                    print(f"Warning: Mouse unhook issue (ignored): {e}")
+                finally:
+                    try:
                         delattr(button, 'mouse_hook')
+                    except Exception:
+                        pass
             
-            # Clean up keyboard hook if it exists
-            if hasattr(button, 'keyboard_hook'):
+            # Clean up keyboard hotkey if it exists
+            if hasattr(button, 'keyboard_hook') or hasattr(button, 'keyboard_hook_type'):
                 try:
-                    # For keyboard hooks, we need to use the remove_hotkey method
-                    if hasattr(button.keyboard_hook, 'handler'):
-                        keyboard.unhook(button.keyboard_hook)
+                    # For keyboard hotkeys registered with add_hotkey, use remove_hotkey
+                    if hasattr(button, 'hotkey') and button.hotkey:
+                        hotkey_str = button.hotkey
+                        # Special cleanup for press_key modifiers
+                        if hasattr(button, 'keyboard_hook_type') and getattr(button, 'keyboard_hook_type', '') == 'press_key':
+                            try:
+                                keyboard.unhook_key(getattr(button, 'keyboard_hotkey_name', hotkey_str))
+                            except Exception:
+                                pass
+                            for attr in ['keyboard_hook_type', 'keyboard_hotkey_name', 'keyboard_hook']:
+                                if hasattr(button, attr):
+                                    try:
+                                        delattr(button, attr)
+                                    except Exception:
+                                        pass
+                            return
+                        # If we installed a low-level hook for numpad, unhook it directly
+                        if hasattr(button, 'keyboard_hook_is_lowlevel') and button.keyboard_hook_is_lowlevel:
+                            try:
+                                keyboard.unhook(button.keyboard_hook)
+                            except Exception:
+                                pass
+                            if hasattr(button, 'keyboard_hook_is_lowlevel'):
+                                delattr(button, 'keyboard_hook_is_lowlevel')
+                            delattr(button, 'keyboard_hook')
+                            return
+                        if hotkey_str.startswith('num_'):
+                            # Convert numpad format to standard format for removal
+                            num_key = hotkey_str.replace('num_', '')
+                            if num_key in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+                                hotkey_str = f"numpad {num_key}"
+                            elif num_key == '+':
+                                hotkey_str = "numpad +"
+                            elif num_key == '-':
+                                hotkey_str = "numpad -"
+                            elif num_key == '*':
+                                hotkey_str = "numpad *"
+                            elif num_key == '/':
+                                hotkey_str = "numpad /"
+                            elif num_key == 'enter':
+                                hotkey_str = "numpad enter"
+                            elif num_key == '.':
+                                hotkey_str = "numpad ."
+                        
+                        keyboard.remove_hotkey(hotkey_str)
                     delattr(button, 'keyboard_hook')
                 except (ValueError, AttributeError) as e:
-                    # Handle case where hook was already removed or is invalid
-                    print(f"Keyboard hook already removed or invalid: {e}")
+                    # Handle case where hotkey was already removed or is invalid
+                    print(f"Keyboard hotkey already removed or invalid: {e}")
                 except Exception as e:
-                    print(f"Unexpected error cleaning up keyboard hook: {e}")
-                    # Ensure we still remove the attribute even if unhooking fails
+                    print(f"Unexpected error cleaning up keyboard hotkey: {e}")
+                    # Ensure we still remove the attribute even if removal fails
                     if hasattr(button, 'keyboard_hook'):
                         delattr(button, 'keyboard_hook')
                         
@@ -3336,6 +4880,77 @@ class GameTextReader:
                         delattr(button, attr)
                     except:
                         pass
+
+    def _start_numpad_fallback(self, button, vk_code, handler):
+        """Start a polling fallback for numpad key press using GetAsyncKeyState.
+        Only used when fullscreen mode is enabled and for numpad keys.
+        """
+        try:
+            # If already running, stop first
+            self._stop_numpad_fallback(button)
+        except Exception:
+            pass
+
+        stop_event = threading.Event()
+        setattr(button, '_fallback_stop_event', stop_event)
+        setattr(button, '_fallback_last_down', False)
+        setattr(button, '_fallback_vk_code', vk_code)
+
+        def poll_loop():
+            try:
+                while not stop_event.is_set():
+                    try:
+                        state = ctypes.windll.user32.GetAsyncKeyState(vk_code)
+                        is_down = bool(state & 0x8000)
+                        last_down = getattr(button, '_fallback_last_down', False)
+                        if is_down and not last_down:
+                            # Edge: key pressed
+                            setattr(button, '_fallback_last_down', True)
+                            # Avoid triggering during hotkey-setting or selection
+                            if getattr(self, 'setting_hotkey', False) or getattr(self, 'hotkeys_disabled_for_selection', False):
+                                time.sleep(0.02)
+                                continue
+                            try:
+                                self.root.after_idle(handler)
+                            except Exception as _e:
+                                pass
+                        elif not is_down and last_down:
+                            setattr(button, '_fallback_last_down', False)
+                    except Exception:
+                        pass
+                    time.sleep(0.02)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=poll_loop, daemon=True)
+        setattr(button, '_fallback_thread', t)
+        try:
+            t.start()
+            print(f"Started fullscreen fallback for VK={vk_code}")
+        except Exception as e:
+            print(f"Could not start fullscreen fallback: {e}")
+
+    def _stop_numpad_fallback(self, button):
+        """Stop polling fallback if running for this button."""
+        if hasattr(button, '_fallback_stop_event'):
+            try:
+                button._fallback_stop_event.set()
+            except Exception:
+                pass
+        if hasattr(button, '_fallback_thread'):
+            try:
+                # Do not block forever
+                button._fallback_thread.join(timeout=0.2)
+            except Exception:
+                pass
+        for attr in ['_fallback_stop_event', '_fallback_thread', '_fallback_last_down', '_fallback_vk_code']:
+            if hasattr(button, attr):
+                try:
+                    delattr(button, attr)
+                except Exception:
+                    pass
+
+    # Removed fullscreen mode toggle handler; fallback is always managed per hotkey
             
     def _get_area_info(self, button):
         """Helper method to get area information for a button"""
@@ -3642,16 +5257,82 @@ class GameTextReader:
 
         # Set the voice and speed for SAPI
         if voice_var:
-            # Get all available SAPI voices
-            voices = self.speaker.GetVoices()
+            # Check both SAPI voices and our combined voice list (including mock voices)
             selected_voice = None
-            # Find the voice with matching name
-            for voice in voices:
-                if voice.GetDescription() == voice_var.get():
-                    selected_voice = voice
-                    break
-            if selected_voice:
-                self.speaker.Voice = selected_voice
+            
+            # First try to find in SAPI voices
+            try:
+                voices = self.speaker.GetVoices()
+                for voice in voices:
+                    if voice.GetDescription() == voice_var.get():
+                        selected_voice = voice
+                        break
+            except Exception as e:
+                print(f"Error getting SAPI voices: {e}")
+            
+            # If not found in SAPI, try our combined voice list (includes mock voices)
+            if not selected_voice and hasattr(self, 'voices'):
+                for voice in self.voices:
+                    if hasattr(voice, 'GetDescription') and voice.GetDescription() == voice_var.get():
+                        # Check if this is a real SAPI voice object
+                        if hasattr(voice, 'GetId') and hasattr(voice, 'GetToken'):  # Working OneCore voice object
+                            print(f"Found working OneCore voice: {voice_var.get()}")
+                            selected_voice = voice
+                            break
+                        elif hasattr(voice, 'GetId'):  # Real SAPI voice object
+                            print(f"Found real voice in combined list: {voice_var.get()}")
+                            selected_voice = voice
+                            break
+                        else:
+                            # For mock voices, we can't set them directly, so just continue
+                            print(f"Found mock voice: {voice_var.get()}")
+                            selected_voice = "mock_voice"  # Mark as found but don't set
+                            break
+            
+            if selected_voice and selected_voice != "mock_voice":
+                try:
+                    # If this is a OneCore voice, route through UWP immediately for reliability
+                    if hasattr(selected_voice, 'GetToken'):
+                        print(f"Using OneCore voice via Narrator: {voice_var.get()}")
+                        if _ensure_uwp_available():
+                            try:
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                loop.run_until_complete(self._speak_with_uwp(filtered_text, preferred_desc=voice_var.get()))
+                                loop.close()
+                                return
+                            except Exception as _e:
+                                print(f"UWP fallback failed: {_e}")
+                                import traceback; traceback.print_exc()
+                        else:
+                            print("UWP TTS not available. Install with: pip install winsdk")
+                        # If UWP not available or failed, we fall through and try SAPI default
+                    else:
+                        # Regular SAPI voice
+                        self.speaker.Voice = selected_voice
+                        print(f"Successfully set voice to: {selected_voice.GetDescription()}")
+                except Exception as set_voice_e:
+                    print(f"Error setting voice: {set_voice_e}")
+                    messagebox.showerror("Error", f"Could not set voice: {set_voice_e}")
+                    return
+            elif selected_voice == "mock_voice":
+                # For mock voices (OneCore), use UWP path if available
+                print(f"Using OneCore (mock) voice via Narrator: {voice_var.get()}")
+                if _ensure_uwp_available():
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        loop.run_until_complete(self._speak_with_uwp(filtered_text, preferred_desc=voice_var.get()))
+                        loop.close()
+                        return
+                    except Exception as _e:
+                        print(f"UWP fallback failed: {_e}")
+                        import traceback; traceback.print_exc()
+                else:
+                    print("UWP TTS not available. Install with: pip install winsdk")
+                # If UWP not available, inform and abort
+                messagebox.showerror("Error", "Selected voice requires Windows Narrator TTS. Please install 'winsdk' (pip install winsdk) or choose a SAPI voice.")
+                return
             else:
                 messagebox.showerror("Error", "No voice selected. Please select a voice.")
                 print("Error: Did not speak, Reason: No selected voice.")
@@ -3700,6 +5381,24 @@ class GameTextReader:
         """Proper cleanup method for the application"""
         print("Performing cleanup...")
         try:
+            # Stop UWP worker
+            try:
+                if hasattr(self, '_uwp_thread_stop'):
+                    self._uwp_thread_stop.set()
+                if hasattr(self, '_uwp_interrupt'):
+                    try:
+                        self._uwp_interrupt.set()
+                    except Exception:
+                        pass
+                if hasattr(self, '_uwp_queue'):
+                    try:
+                        self._uwp_queue.put_nowait(("STOP", None, None))
+                    except Exception:
+                        pass
+                if hasattr(self, '_uwp_thread') and self._uwp_thread:
+                    self._uwp_thread.join(timeout=0.5)
+            except Exception:
+                pass
             # First, clean up the debug console if it exists
             if hasattr(self, 'console_window'):
                 try:
@@ -3859,10 +5558,12 @@ def capture_screen_area(x1, y1, x2, y2):
 
 if __name__ == "__main__":
     import tempfile, os, json
-    from tkinterdnd2 import DND_FILES, TkinterDnD
     
-    # Use TkinterDnD's Tk instead of tkinter's Tk
-    root = TkinterDnD.Tk()
+    # Use TkinterDnD's Tk if available, otherwise use regular tkinter
+    if TKDND_AVAILABLE:
+        root = TkinterDnD.Tk()
+    else:
+        root = tk.Tk()
     app = GameTextReader(root)
     # Create permanent area at the top
     app.add_read_area(removable=False, editable_name=False, area_name="Auto Read")
@@ -3887,7 +5588,7 @@ if __name__ == "__main__":
             if settings.get('hotkey'):
                 hotkey_button.hotkey = settings['hotkey']
                 display_name = settings['hotkey'].replace('num_', 'num:') if settings['hotkey'].startswith('num_') else settings['hotkey']
-                hotkey_button.config(text=f"Set Hotkey: [ {display_name} ]")
+                hotkey_button.config(text=f"Set Hotkey: [ {display_name.upper()} ]")
                 app.setup_hotkey(hotkey_button, area_frame)
             
             # Get processing settings from the 'processing' dictionary
@@ -3957,4 +5658,5 @@ if __name__ == "__main__":
                     'threshold_enabled': False,
                 }
 
+    root.mainloop()
     root.mainloop()
