@@ -2411,16 +2411,7 @@ class GameTextReader:
         )
         coffee_note.pack(pady=(15, 20), anchor='center')
         
-        # Add a test button to verify URL opening works
-        test_frame = ttk.Frame(credits_frame)
-        test_frame.pack(pady=(0, 10))
-        
-        def test_url_open():
-            print("Test button clicked!")
-            open_url("https://www.google.com")
-        
-        test_button = ttk.Button(test_frame, text="Test URL Opening", command=test_url_open)
-        test_button.pack()
+
 
 
         # Spacer before Tesseract warning
