@@ -28,6 +28,7 @@ import win32com.client
 import win32con
 import win32gui
 import win32ui
+import win32process
 from PIL import Image, ImageEnhance, ImageFilter, ImageGrab, ImageTk
 import ctypes
 import winsound
@@ -39,16 +40,16 @@ try:
     UWP_TTS_AVAILABLE = False
     _uwp_import_error = None
     try:
-        from winrt.windows.media.speechsynthesis import SpeechSynthesizer
-        from winrt.windows.storage.streams import DataReader
+        from winsdk.windows.media.speechsynthesis import SpeechSynthesizer
+        from winsdk.windows.storage.streams import DataReader
         UWP_TTS_AVAILABLE = True
     except Exception as e:
         _uwp_import_error = e
         try:
             # Attempt to import winsdk meta package and retry
             importlib.import_module('winsdk')
-            from winrt.windows.media.speechsynthesis import SpeechSynthesizer
-            from winrt.windows.storage.streams import DataReader
+            from winsdk.windows.media.speechsynthesis import SpeechSynthesizer
+            from winsdk.windows.storage.streams import DataReader
             UWP_TTS_AVAILABLE = True
             _uwp_import_error = None
         except Exception as e2:
@@ -77,8 +78,8 @@ def _ensure_uwp_available():
         except Exception:
             pass
         try:
-            from winrt.windows.media.speechsynthesis import SpeechSynthesizer as _SS  # noqa: F401
-            from winrt.windows.storage.streams import DataReader as _DR  # noqa: F401
+            from winsdk.windows.media.speechsynthesis import SpeechSynthesizer as _SS  # noqa: F401
+            from winsdk.windows.storage.streams import DataReader as _DR  # noqa: F401
             UWP_TTS_AVAILABLE = True
         except Exception:
             from winsdk.windows.media.speechsynthesis import SpeechSynthesizer as _SS  # type: ignore # noqa: F401
@@ -91,6 +92,50 @@ def _ensure_uwp_available():
         except Exception:
             pass
     return UWP_TTS_AVAILABLE
+
+def get_current_keyboard_layout():
+    """Get the current active Windows keyboard layout to ensure consistent hotkey behavior"""
+    try:
+        # Get the current foreground window's thread
+        hwnd = win32gui.GetForegroundWindow()
+        thread_id = win32process.GetWindowThreadProcessId(hwnd)[0]
+        
+        # Get the keyboard layout for this thread
+        layout_id = win32api.GetKeyboardLayout(thread_id)
+        
+        # Convert to hex string for comparison
+        layout_hex = hex(layout_id & 0xFFFF)
+        
+        print(f"Current keyboard layout: {layout_hex}")
+        return layout_hex
+    except Exception as e:
+        print(f"Could not get keyboard layout: {e}")
+        return None
+
+def normalize_key_name(key_name, scan_code=None):
+    """Normalize key names to ensure consistent behavior across keyboard layouts"""
+    try:
+        # Get current layout
+        current_layout = get_current_keyboard_layout()
+        
+        # For now, just return the key name as-is, but we can add layout-specific mappings later
+        # This function can be expanded to handle different keyboard layouts if needed
+        
+        # Ensure consistent casing
+        if key_name:
+            key_name = key_name.lower()
+            
+            # Normalize common variations
+            key_name = key_name.replace('left ', 'l-').replace('right ', 'r-')
+            key_name = key_name.replace('ctrl', 'ctrl')
+            key_name = key_name.replace('alt', 'alt')
+            key_name = key_name.replace('shift', 'shift')
+            key_name = key_name.replace('windows', 'win')
+            
+        return key_name
+    except Exception as e:
+        print(f"Error normalizing key name: {e}")
+        return key_name
 
 # Try to import tkinterdnd2 for drag and drop functionality
 try:
@@ -107,21 +152,25 @@ except AttributeError:
 except Exception as e:
     print(f"Warning: Could not set DPI awareness: {e}")
 
-APP_VERSION = "0.8.5"
+APP_VERSION = "0.8.5.1"
 
 CHANGELOG = """
-- Fixed an issue where numpad hotkeys didn’t work in fullscreen mode for some users.
+0.8.5.1: 
+- Numpad hotkeys were broken, now fixed.
+- Fixed so that the program is more consistent in which keyboard layout it uses for hotkeys if you have more than one.
+- Minor UI Changes.
+
+0.8.5: 
+- Fixed an issue where numpad hotkeys didn't work in fullscreen mode for some users.
 - Properly added support for voices installed via Windows settings.
 - Updated the Info/Help window.
 - Made minor UI improvements.
-
 
 Thanks to everyone who has sent in feedback and bug reports!
 
 Note: Some users have requested to add AI Voices this will the next main priority.
 
-- Thanks for using GameReader!
- 
+Thanks for using GameReader!
 """
 
 
@@ -146,6 +195,14 @@ def show_thinkr_warning(game_reader, area_name):
     win.resizable(False, False)
     win.grab_set()
     win.transient(game_reader.root)
+    
+    # Set the window icon
+    try:
+        icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
+        if os.path.exists(icon_path):
+            win.iconbitmap(icon_path)
+    except Exception as e:
+        print(f"Error setting warning dialog icon: {e}")
 
     # Center the dialog
     win.update_idletasks()
@@ -196,6 +253,15 @@ class ConsoleWindow:
     def __init__(self, root, log_buffer, layout_file_var, latest_images, latest_area_name_var):
         self.window = tk.Toplevel(root)
         self.window.title("Debug Console")
+        
+        # Set the window icon
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
+            if os.path.exists(icon_path):
+                self.window.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Error setting console window icon: {e}")
+        
         self.latest_images = latest_images
         self.window.geometry("690x500")  # Initial size, will adjust based on image
 
@@ -414,10 +480,22 @@ class ImageProcessingWindow:
     def __init__(self, root, area_name, latest_images, settings, game_text_reader):
         self.window = tk.Toplevel(root)
         self.window.title(f"Image Processing for: {area_name}")
+        
+        # Set the window icon
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
+            if os.path.exists(icon_path):
+                self.window.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Error setting image processing window icon: {e}")
+        
         self.area_name = area_name
         self.latest_images = latest_images
         self.settings = settings
         self.game_text_reader = game_text_reader
+        
+        # Set up protocol to re-enable hotkeys when window closes
+        self.window.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Check if there is an image for the area
         if area_name not in latest_images:
@@ -428,9 +506,17 @@ class ImageProcessingWindow:
         self.image = latest_images[area_name]
         self.processed_image = self.image.copy()
 
+        # Add note about hotkeys being disabled
+        hotkey_note = ttk.Label(self.window, text="Note: Hotkeys are disabled while this window is open.", 
+                               font=("Helvetica", 10, "bold"), foreground='#666666')
+        hotkey_note.grid(row=0, column=0, columnspan=5, padx=10, pady=(10, 5), sticky='w')
+        
+        # Disable hotkeys when this window opens
+        self.game_text_reader.disable_all_hotkeys()
+        
         # Create a canvas to display the image
         self.image_frame = ttk.Frame(self.window)
-        self.image_frame.grid(row=0, column=0, columnspan=5, padx=10, pady=10)
+        self.image_frame.grid(row=1, column=0, columnspan=5, padx=10, pady=5)
         self.canvas = tk.Canvas(self.image_frame, width=self.image.width, height=self.image.height)
         self.canvas.pack()
 
@@ -445,7 +531,7 @@ class ImageProcessingWindow:
 
         # Create a frame for bottom controls
         control_frame = ttk.Frame(self.window)
-        control_frame.grid(row=1, column=0, columnspan=5, pady=10)
+        control_frame.grid(row=2, column=0, columnspan=5, pady=10)
 
         # Add scale dropdown
         scale_frame = ttk.Frame(control_frame)
@@ -473,14 +559,14 @@ class ImageProcessingWindow:
         self.exposure_var = tk.DoubleVar(value=settings.get('exposure', 1.0))
         self.threshold_enabled_var = tk.BooleanVar(value=settings.get('threshold_enabled', False))
 
-        self.create_slider("Brightness", self.brightness_var, 0.1, 2.0, 1.0, 2, 0)
-        self.create_slider("Contrast", self.contrast_var, 0.1, 2.0, 1.0, 2, 1)
-        self.create_slider("Saturation", self.saturation_var, 0.1, 2.0, 1.0, 2, 2)
-        self.create_slider("Sharpness", self.sharpness_var, 0.1, 2.0, 1.0, 2, 3)
-        self.create_slider("Blur", self.blur_var, 0.0, 10.0, 0.0, 2, 4)
-        self.create_slider("Threshold", self.threshold_var, 0, 255, 128, 3, 0, self.threshold_enabled_var)
-        self.create_slider("Hue", self.hue_var, -1.0, 1.0, 0.0, 3, 1)
-        self.create_slider("Exposure", self.exposure_var, 0.1, 2.0, 1.0, 3, 2)
+        self.create_slider("Brightness", self.brightness_var, 0.1, 2.0, 1.0, 3, 0)
+        self.create_slider("Contrast", self.contrast_var, 0.1, 2.0, 1.0, 3, 1)
+        self.create_slider("Saturation", self.saturation_var, 0.1, 2.0, 1.0, 3, 2)
+        self.create_slider("Sharpness", self.sharpness_var, 0.1, 2.0, 1.0, 3, 3)
+        self.create_slider("Blur", self.blur_var, 0.0, 10.0, 0.0, 3, 4)
+        self.create_slider("Threshold", self.threshold_var, 0, 255, 128, 4, 0, self.threshold_enabled_var)
+        self.create_slider("Hue", self.hue_var, -1.0, 1.0, 0.0, 4, 1)
+        self.create_slider("Exposure", self.exposure_var, 0.1, 2.0, 1.0, 4, 2)
 
     def create_slider(self, label, variable, from_, to, initial, row, col, enabled_var=None):
         frame = ttk.Frame(self.window)
@@ -672,6 +758,15 @@ class ImageProcessingWindow:
             dialog = tk.Toplevel(self.window)
             dialog.title("No Save File")
             dialog.geometry("400x150")
+            
+            # Set the window icon
+            try:
+                icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
+                if os.path.exists(icon_path):
+                    dialog.iconbitmap(icon_path)
+            except Exception as e:
+                print(f"Error setting dialog icon: {e}")
+            
             dialog.transient(self.window)  # Make dialog modal
             dialog.grab_set()  # Make dialog modal
             
@@ -813,9 +908,12 @@ class ImageProcessingWindow:
         # Update the displayed image
         self.photo_image = ImageTk.PhotoImage(display_image)
         self.canvas.itemconfig(self.image_on_canvas, image=self.photo_image)
-	
-        
-        
+    
+    def on_close(self):
+        """Re-enable hotkeys when the window is closed"""
+        self.game_text_reader.restore_all_hotkeys()
+        self.window.destroy()
+
 
 def preprocess_image(image, brightness=1.0, contrast=1.0, saturation=1.0, sharpness=1.0, blur=0.0, threshold=None, hue=0.0, exposure=1.0):
     print("Preprocessing image...")
@@ -884,6 +982,14 @@ def check_for_update(local_version, force=False):  #for testing the updatewindow
                 popup.title("Update Available")
                 popup.geometry("750x350")  # Set initial size
                 popup.minsize(400, 150)    # Set minimum size
+                
+                # Set the window icon
+                try:
+                    icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
+                    if os.path.exists(icon_path):
+                        popup.iconbitmap(icon_path)
+                except Exception as e:
+                    print(f"Error setting update popup icon: {e}")
                 
                 # Make window resizable
                 popup.resizable(True, True)
@@ -982,7 +1088,10 @@ class GameTextReader:
         FORCE_UPDATE_CHECK = False  # Set to True to force update popup, False for normal behavior
         threading.Thread(target=lambda: check_for_update(local_version, force=FORCE_UPDATE_CHECK), daemon=True).start()
         # --- End update check ---
-        self.root.geometry("1115x260")  # Initial window size (height reduced for less vertical tallness)
+        
+        # Don't set initial geometry here - let it be calculated after GUI setup
+        # self.root.geometry("1115x260")  # Initial window size (height reduced for less vertical tallness)
+        
         self.layout_file = tk.StringVar()
         self.latest_images = {}  # Use a dictionary to store images for each area
         self.latest_area_name = tk.StringVar()  # Ensure this is defined
@@ -1022,6 +1131,7 @@ class GameTextReader:
         self.unhook_timer = None  # Timer for hotkey unhooking
         self.keyboard_hooks = []  # List to track keyboard hooks
         self.mouse_hooks = []  # List to track mouse hooks
+        self.info_window_open = False  # Flag to track if info window is open
         
         # Setup Tesseract command path if it's not in your PATH
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -1583,15 +1693,15 @@ class GameTextReader:
             return
         # Import lazily to avoid hard dependency at import time
         try:
-            from winrt.windows.media.speechsynthesis import SpeechSynthesizer  # type: ignore
+            from winsdk.windows.media.speechsynthesis import SpeechSynthesizer  # type: ignore
         except Exception:
             try:
                 from winsdk.windows.media.speechsynthesis import SpeechSynthesizer  # type: ignore
             except Exception:
                 return
         try:
-            from winrt.windows.media.playback import MediaPlayer  # type: ignore
-            from winrt.windows.media.core import MediaSource  # type: ignore
+            from winsdk.windows.media.playback import MediaPlayer  # type: ignore
+            from winsdk.windows.media.core import MediaSource  # type: ignore
         except Exception:
             try:
                 from winsdk.windows.media.playback import MediaPlayer  # type: ignore
@@ -1673,8 +1783,8 @@ class GameTextReader:
         # Lazy imports inside worker
         try:
             try:
-                from winrt.windows.media.playback import MediaPlayer
-                from winrt.windows.media.core import MediaSource
+                from winsdk.windows.media.playback import MediaPlayer
+                from winsdk.windows.media.core import MediaSource
             except Exception:
                 from winsdk.windows.media.playback import MediaPlayer  # type: ignore
                 from winsdk.windows.media.core import MediaSource  # type: ignore
@@ -1705,7 +1815,7 @@ class GameTextReader:
                     if player is not None and not interrupt_flag:
                         try:
                             try:
-                                from winrt.windows.media.playback import MediaPlaybackState  # type: ignore
+                                from winsdk.windows.media.playback import MediaPlaybackState  # type: ignore
                             except Exception:
                                 try:
                                     from winsdk.windows.media.playback import MediaPlaybackState  # type: ignore
@@ -1990,23 +2100,12 @@ class GameTextReader:
         info_window.title("GameReader - Information")
         info_window.geometry("900x600")  # Slightly taller for better spacing
 
-        # --- Disable all hotkeys while info window is open ---
-        try:
-            keyboard.unhook_all()
-            mouse.unhook_all()
-        except Exception as e:
-            print(f"Error unhooking hotkeys for info window: {e}")
-
-        # On close, re-enable all hotkeys
+        # --- Set flag to prevent hotkeys from interfering with info window ---
+        self.info_window_open = True
+        
+        # On close, clear the flag
         def on_info_close():
-            # Restore hotkeys for all areas
-            for area in self.areas:
-                area_frame, hotkey_button, _, area_name_var, _, _, _ = area
-                if hasattr(hotkey_button, 'hotkey'):
-                    self.setup_hotkey(hotkey_button, area_frame)
-            # Restore stop hotkey if present
-            if hasattr(self, 'stop_hotkey_button') and hasattr(self.stop_hotkey_button, 'mock_button'):
-                self.setup_hotkey(self.stop_hotkey_button.mock_button, None)
+            self.info_window_open = False
             info_window.destroy()
 
         info_window.protocol("WM_DELETE_WINDOW", on_info_close)
@@ -2014,9 +2113,11 @@ class GameTextReader:
         
         # Set window icon if available
         try:
-            info_window.iconbitmap('icon.ico')  # You would need to add an icon file
-        except:
-            pass
+            icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
+            if os.path.exists(icon_path):
+                info_window.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Error setting info window icon: {e}")
         
         # Main container with padding
         main_frame = ttk.Frame(info_window, padding="20 20 20 10")
@@ -2030,6 +2131,8 @@ class GameTextReader:
                                text=f"GameReader v{APP_VERSION}", 
                                font=("Helvetica", 16, "bold"))
         title_label.pack(side='left')
+        
+
         
         # Credits/Links Area replaced by clickable images
         credits_frame = ttk.Frame(main_frame)
@@ -2085,7 +2188,7 @@ class GameTextReader:
             info_window.google_photo, info_window.google_photo_hover = make_photos(info_window.google_pil)
             info_window.github_photo, info_window.github_photo_hover = make_photos(info_window.github_pil)
 
-            # Smooth shrink animation on mouse leave
+            # Smooth animations for hover effects
             def _cancel_anim(c):
                 if hasattr(c, "_anim_job") and c._anim_job:
                     try:
@@ -2093,6 +2196,28 @@ class GameTextReader:
                     except Exception:
                         pass
                     c._anim_job = None
+
+            def animate_to_hover(canvas, image_id, pil_img):
+                duration_ms = 100
+                steps = 12
+                _cancel_anim(canvas)
+                frames = []
+
+                def step(i):
+                    t = i / steps
+                    scale = base_scale + (base_scale * hover_scale - base_scale) * t
+                    w = max(1, int(pil_img.size[0] * scale))
+                    h = max(1, int(pil_img.size[1] * scale))
+                    frame = ImageTk.PhotoImage(pil_img.resize((w, h), Image.LANCZOS))
+                    frames.append(frame)
+                    canvas.itemconfig(image_id, image=frame)
+                    if i < steps:
+                        canvas._anim_job = canvas.after(int(duration_ms / steps), lambda: step(i + 1))
+                    else:
+                        canvas._anim_job = None
+                        canvas._anim_frames = frames  # keep refs
+
+                step(0)
 
             def animate_to_normal(canvas, image_id, pil_img):
                 duration_ms = 230
@@ -2116,6 +2241,8 @@ class GameTextReader:
 
                 step(0)
 
+
+
             # Coffee image (fixed-size canvas, allows hover to be clipped by bounds)
             coffee_cw = info_window.coffee_photo_hover.width()
             coffee_ch = info_window.coffee_photo_hover.height()
@@ -2125,18 +2252,46 @@ class GameTextReader:
                 height=coffee_ch,
                 highlightthickness=0,
                 bd=0,
-                cursor='hand2'
+                cursor='hand2',
+                takefocus=1
             )
             coffee_canvas.pack(side='left', padx=10)
             coffee_img_id = coffee_canvas.create_image(coffee_cw // 2, coffee_ch // 2, image=info_window.coffee_photo)
-            coffee_canvas.bind("<Button-1>", lambda e: open_url("https://buymeacoffee.com/mertennor"))
+            
+            # Store original hover state for coffee canvas
+            coffee_canvas._was_hovered = False
+            
+            def coffee_click_start(e):
+                # Store current hover state and instantly shrink image
+                coffee_canvas._was_hovered = getattr(coffee_canvas, '_is_hovered', False)
+                # Cancel any ongoing animations and instantly show normal size
+                _cancel_anim(coffee_canvas)
+                w, h = info_window.coffee_pil.size
+                w_norm = max(1, int(w * base_scale))
+                h_norm = max(1, int(h * base_scale))
+                normal_photo = ImageTk.PhotoImage(info_window.coffee_pil.resize((w_norm, h_norm), Image.LANCZOS))
+                coffee_canvas.itemconfig(coffee_img_id, image=normal_photo)
+                # Keep reference to prevent garbage collection
+                coffee_canvas._click_photo = normal_photo
+            
+            def coffee_click_end(e):
+                # Restore to hover state if it was hovered before
+                if coffee_canvas._was_hovered:
+                    animate_to_hover(coffee_canvas, coffee_img_id, info_window.coffee_pil)
+                # Open URL when click is released
+                print("Coffee image clicked!")
+                open_url("https://buymeacoffee.com/mertennor")
+            
+            # Bind animation events - URL opening is handled in click_end
+            coffee_canvas.bind("<ButtonPress-1>", coffee_click_start)
+            coffee_canvas.bind("<ButtonRelease-1>", coffee_click_end)
             coffee_canvas.bind(
                 "<Enter>",
-                lambda e, c=coffee_canvas, iid=coffee_img_id: c.itemconfig(iid, image=info_window.coffee_photo_hover)
+                lambda e, c=coffee_canvas, iid=coffee_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, info_window.coffee_pil))
             )
             coffee_canvas.bind(
                 "<Leave>",
-                lambda e, c=coffee_canvas, iid=coffee_img_id: animate_to_normal(c, iid, info_window.coffee_pil)
+                lambda e, c=coffee_canvas, iid=coffee_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, info_window.coffee_pil))
             )
 
             # Google Form image (fixed-size canvas)
@@ -2148,18 +2303,46 @@ class GameTextReader:
                 height=google_ch,
                 highlightthickness=0,
                 bd=0,
-                cursor='hand2'
+                cursor='hand2',
+                takefocus=1
             )
             google_canvas.pack(side='left', padx=10)
             google_img_id = google_canvas.create_image(google_cw // 2, google_ch // 2, image=info_window.google_photo)
-            google_canvas.bind("<Button-1>", lambda e: open_url("https://forms.gle/8YBU8atkgwjyzdM79"))
+            
+            # Store original hover state for google canvas
+            google_canvas._was_hovered = False
+            
+            def google_click_start(e):
+                # Store current hover state and instantly shrink image
+                google_canvas._was_hovered = getattr(google_canvas, '_is_hovered', False)
+                # Cancel any ongoing animations and instantly show normal size
+                _cancel_anim(google_canvas)
+                w, h = info_window.google_pil.size
+                w_norm = max(1, int(w * base_scale))
+                h_norm = max(1, int(h * base_scale))
+                normal_photo = ImageTk.PhotoImage(info_window.google_pil.resize((w_norm, h_norm), Image.LANCZOS))
+                google_canvas.itemconfig(google_img_id, image=normal_photo)
+                # Keep reference to prevent garbage collection
+                google_canvas._click_photo = normal_photo
+            
+            def google_click_end(e):
+                # Restore to hover state if it was hovered before
+                if google_canvas._was_hovered:
+                    animate_to_hover(google_canvas, google_img_id, info_window.google_pil)
+                # Open URL when click is released
+                print("Google Form image clicked!")
+                open_url("https://forms.gle/8YBU8atkgwjyzdM79")
+            
+            # Bind animation events - URL opening is handled in click_end
+            google_canvas.bind("<ButtonPress-1>", google_click_start)
+            google_canvas.bind("<ButtonRelease-1>", google_click_end)
             google_canvas.bind(
                 "<Enter>",
-                lambda e, c=google_canvas, iid=google_img_id: c.itemconfig(iid, image=info_window.google_photo_hover)
+                lambda e, c=google_canvas, iid=google_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, info_window.google_pil))
             )
             google_canvas.bind(
                 "<Leave>",
-                lambda e, c=google_canvas, iid=google_img_id: animate_to_normal(c, iid, info_window.google_pil)
+                lambda e, c=google_canvas, iid=google_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, info_window.google_pil))
             )
 
             # GitHub image (fixed-size canvas)
@@ -2171,23 +2354,73 @@ class GameTextReader:
                 height=github_ch,
                 highlightthickness=0,
                 bd=0,
-                cursor='hand2'
+                cursor='hand2',
+                takefocus=1
             )
             github_canvas.pack(side='left', padx=10)
             github_img_id = github_canvas.create_image(github_cw // 2, github_ch // 2, image=info_window.github_photo)
-            github_canvas.bind("<Button-1>", lambda e: open_url("https://github.com/MertenNor/GameReader"))
+            
+            # Store original hover state for github canvas
+            github_canvas._was_hovered = False
+            
+            def github_click_start(e):
+                # Store current hover state and instantly shrink image
+                github_canvas._was_hovered = getattr(github_canvas, '_is_hovered', False)
+                # Cancel any ongoing animations and instantly show normal size
+                _cancel_anim(github_canvas)
+                w, h = info_window.github_pil.size
+                w_norm = max(1, int(w * base_scale))
+                h_norm = max(1, int(h * base_scale))
+                normal_photo = ImageTk.PhotoImage(info_window.github_pil.resize((w_norm, h_norm), Image.LANCZOS))
+                github_canvas.itemconfig(github_img_id, image=normal_photo)
+                # Keep reference to prevent garbage collection
+                github_canvas._click_photo = normal_photo
+            
+            def github_click_end(e):
+                # Restore to hover state if it was hovered before
+                if github_canvas._was_hovered:
+                    animate_to_hover(github_canvas, github_img_id, info_window.github_pil)
+                # Open URL when click is released
+                print("GitHub image clicked!")
+                open_url("https://github.com/MertenNor/GameReader")
+            
+            # Bind animation events - URL opening is handled in click_end
+            github_canvas.bind("<ButtonPress-1>", github_click_start)
+            github_canvas.bind("<ButtonRelease-1>", github_click_end)
             github_canvas.bind(
                 "<Enter>",
-                lambda e, c=github_canvas, iid=github_img_id: c.itemconfig(iid, image=info_window.github_photo_hover)
+                lambda e, c=github_canvas, iid=github_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, info_window.github_pil))
             )
             github_canvas.bind(
                 "<Leave>",
-                lambda e, c=github_canvas, iid=github_img_id: animate_to_normal(c, iid, info_window.github_pil)
+                lambda e, c=github_canvas, iid=github_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, info_window.github_pil))
             )
         except Exception as e:
             # Fallback text if images can't be displayed
             fallback = ttk.Label(credits_frame, text=f"Error displaying info images: {e}", foreground='red')
             fallback.pack(anchor='w')
+
+        # Coffee note below the images
+        coffee_note = ttk.Label(
+            credits_frame,
+            text="☕ Note: You don't have to fuel my caffeine addiction… but I wouldn't say no! Every coffee helps me argue with AI until the code finally works. All funds are shared between me and the few helping me bring this project to life.",
+            font=("Helvetica", 9, "bold"),
+            foreground='#666666',
+            wraplength=800,
+            justify='center'
+        )
+        coffee_note.pack(pady=(15, 20), anchor='center')
+        
+        # Add a test button to verify URL opening works
+        test_frame = ttk.Frame(credits_frame)
+        test_frame.pack(pady=(0, 10))
+        
+        def test_url_open():
+            print("Test button clicked!")
+            open_url("https://www.google.com")
+        
+        test_button = ttk.Button(test_frame, text="Test URL Opening", command=test_url_open)
+        test_button.pack()
 
 
         # Spacer before Tesseract warning
@@ -2248,7 +2481,7 @@ class GameTextReader:
         direct_link.bind("<Leave>", lambda e: direct_link.configure(font=("Helvetica", 10)))
         # Explanatory label below
         tesseract_note = ttk.Label(tesseract_frame,
-                                   text="( yes, you need this if you want this program to read the text for you. )",
+                                   text="(If you don't hear any sound when pressing a hotkey, please install this or check if Windows is blocking the audio.)",
                                    font=("Helvetica", 11, "bold"),
                                    foreground='red')
         tesseract_note.pack(anchor='w', padx=(0,0), pady=(2, 6))
@@ -2464,6 +2697,10 @@ class GameTextReader:
 
         self._hotkey_assignment_cancelled = False  # Guard flag to block late events
         self.setting_hotkey = True
+        
+        # Ensure consistent keyboard layout for stop hotkey
+        current_layout = get_current_keyboard_layout()
+        print(f"Setting up stop hotkey with keyboard layout: {current_layout} for consistency")
 
         def finish_hotkey_assignment():
             # Restore all hotkeys after assignment is done
@@ -2559,31 +2796,52 @@ class GameTextReader:
             # Ignore Escape
             if event.scan_code == 1:
                 return
-            # Normalize name and side
-            raw_name = (event.name or '').lower()
+            
+            # Use scan code and virtual key code for consistent behavior across keyboard layouts
+            scan_code = getattr(event, 'scan_code', None)
+            vk_code = getattr(event, 'vk_code', None)
+            
+            # Get current keyboard layout for consistency
+            current_layout = get_current_keyboard_layout()
+            
+            # Determine key name based on scan code and virtual key code for consistency
+            name = None
             side = None
-            if any(s in raw_name for s in ["right", "høyre", "rechts", "derecha", "droite", "destra", "dereito", "höger"]):
-                side = 'right'
-            if any(s in raw_name for s in ["left", "venstre", "links", "izquierda", "gauche", "sinistra", "esquerda", "vänster"]):
+            
+            # Handle modifier keys consistently
+            if scan_code == 29:  # Left Ctrl
+                name = 'left ctrl'
                 side = 'left'
-            base = None
-            if any(x in raw_name for x in ["ctrl", "control", "strg"]):
-                base = 'ctrl'
-            elif any(x in raw_name for x in ["altgr", "option", "menu"]) or raw_name.strip() == 'alt':
-                base = 'alt'
-            elif any(x in raw_name for x in ["shift", "skift", "umschalt"]):
-                base = 'shift'
-            elif any(x in raw_name for x in ["windows", "win", "super", "meta", "cmd", "command", "lwin", "rwin"]):
-                base = 'windows'
-            if base:
-                if base in ('ctrl','alt'):
-                    name = f"{side or 'left'} {base}"
-                elif base in ('shift','windows'):
-                    name = base
-                else:
-                    name = base
+            elif scan_code == 157:  # Right Ctrl
+                name = 'right ctrl'
+                side = 'right'
+            elif scan_code == 42:  # Left Shift
+                name = 'shift'
+                side = 'left'
+            elif scan_code == 54:  # Right Shift
+                name = 'shift'
+                side = 'right'
+            elif scan_code == 56:  # Left Alt
+                name = 'left alt'
+                side = 'left'
+            elif scan_code == 184:  # Right Alt
+                name = 'right alt'
+                side = 'right'
+            elif scan_code == 91:  # Left Windows
+                name = 'windows'
+                side = 'left'
+            elif scan_code == 92:  # Right Windows
+                name = 'windows'
+                side = 'right'
             else:
-                name = raw_name
+                # For non-modifier keys, use the event name but normalize it
+                raw_name = (event.name or '').lower()
+                name = normalize_key_name(raw_name)
+                
+                # Check if it's a numpad key
+                if scan_code in self.numpad_scan_codes:
+                    sym = self.numpad_scan_codes[scan_code]
+                    name = f"num_{sym}"
 
             # Non-modifier pressed
             if name not in ('ctrl','left ctrl','right ctrl','alt','left alt','right alt','shift','windows'):
@@ -2604,6 +2862,13 @@ class GameTextReader:
                             held.append('windows')
                         if len(held) == 1:
                             only = held[0]
+                            # Determine base from name
+                            base = None
+                            if 'ctrl' in name: base = 'ctrl'
+                            elif 'alt' in name: base = 'alt'
+                            elif 'shift' in name: base = 'shift'
+                            elif 'windows' in name: base = 'windows'
+                            
                             if (base == 'ctrl' and (only in ['left ctrl','right ctrl'])) or \
                                (base == 'alt' and (only in ['left alt','right alt'])) or \
                                (base == 'shift' and only == 'shift') or \
@@ -2635,7 +2900,7 @@ class GameTextReader:
             base_key = name
             if event.scan_code in self.numpad_scan_codes:
                 sym = self.numpad_scan_codes[event.scan_code]
-                base_key = f"numpad {sym}"
+                base_key = f"num_{sym}"
             if base_key in ("ctrl", "shift", "alt", "windows", "left ctrl", "right ctrl", "left alt", "right alt"):
                 combo_parts = (mods + [base_key]) if base_key not in mods else mods[:]
             else:
@@ -2710,6 +2975,33 @@ class GameTextReader:
             # Store the hooks as attributes of the button for cleanup
             self.stop_hotkey_button.keyboard_hook_temp = keyboard.on_press(on_key_press, suppress=True)
             self.stop_hotkey_button.mouse_hook_temp = mouse.hook(on_mouse_click)
+            
+            # Live preview of currently held modifiers while waiting for a non-modifier key
+            def _update_hotkey_preview():
+                if self._hotkey_assignment_cancelled or not self.setting_hotkey:
+                    return
+                try:
+                    mods = []
+                    if keyboard.is_pressed('left ctrl'): mods.append('L-CTRL')
+                    if keyboard.is_pressed('right ctrl'): mods.append('R-CTRL')
+                    if keyboard.is_pressed('shift'): mods.append('SHIFT')
+                    if keyboard.is_pressed('left alt'): mods.append('L-ALT')
+                    if keyboard.is_pressed('right alt'): mods.append('R-ALT')
+                    if keyboard.is_pressed('left windows') or keyboard.is_pressed('right windows') or keyboard.is_pressed('windows'):
+                        mods.append('WIN')
+                    preview = " + ".join(mods)
+                    if preview:
+                        self.stop_hotkey_button.config(text=f"Press any key or mouse button... [ {preview} + ]")
+                    else:
+                        self.stop_hotkey_button.config(text="Press any key or mouse button...")
+                except Exception:
+                    pass
+                # Schedule next update
+                try:
+                    self._hotkey_preview_job = self.root.after(80, _update_hotkey_preview)
+                except Exception:
+                    pass
+            
             # Start live preview polling
             try:
                 self._hotkey_preview_job = self.root.after(80, _update_hotkey_preview)
@@ -2920,7 +3212,7 @@ class GameTextReader:
             bind_resize_events(widget)
         area_frame.bind('<Configure>', lambda e: self.resize_window())
 
-        # Automatically recompute layout without forcing geometry, so default window size is preserved
+        # Call resize_window to ensure the window properly resizes when new areas are added
         self.resize_window(force=True)
 
     def remove_area(self, area_frame, area_name):
@@ -2962,6 +3254,9 @@ class GameTextReader:
         # Remove the area from the list of areas
         self.areas = [area for area in self.areas if area[0] != area_frame]
         print(f"Removed area: {area_name}\n--------------------------")
+        
+        # Resize the window after removing an area to ensure proper sizing
+        self.resize_window(force=True)
 
     def resize_window(self, force: bool = False):
         """Resize the window based on current content.
@@ -3449,34 +3744,52 @@ class GameTextReader:
             # Ignore Escape
             if event.scan_code == 1:
                 return
-            # Normalize key name and detect side for modifiers (handles localized names)
-            raw_name = (event.name or '').lower()
+            
+            # Use scan code and virtual key code for consistent behavior across keyboard layouts
+            scan_code = getattr(event, 'scan_code', None)
+            vk_code = getattr(event, 'vk_code', None)
+            
+            # Get current keyboard layout for consistency
+            current_layout = get_current_keyboard_layout()
+            
+            # Determine key name based on scan code and virtual key code for consistency
+            name = None
             side = None
-            # Detect side hints
-            if any(s in raw_name for s in ["right", "høyre", "rechts", "derecha", "droite", "destra", "dereito", "höger"]):
-                side = 'right'
-            if any(s in raw_name for s in ["left", "venstre", "links", "izquierda", "gauche", "sinistra", "esquerda", "vänster"]):
+            
+            # Handle modifier keys consistently
+            if scan_code == 29:  # Left Ctrl
+                name = 'left ctrl'
                 side = 'left'
-            # Base modifier detection
-            base = None
-            if any(x in raw_name for x in ["ctrl", "control", "strg"]):
-                base = 'ctrl'
-            elif any(x in raw_name for x in ["altgr", "option", "menu"]) or raw_name.strip() == 'alt':
-                base = 'alt'
-            elif any(x in raw_name for x in ["shift", "skift", "umschalt"]):
-                base = 'shift'
-            elif any(x in raw_name for x in ["windows", "win", "super", "meta", "cmd", "command", "lwin", "rwin"]):
-                base = 'windows'
-            # Compose canonical name for modifier or keep raw for normal keys
-            if base:
-                if base in ('ctrl','alt'):
-                    name = f"{side or 'left'} {base}"  # default to left when side unknown
-                elif base in ('shift','windows'):
-                    name = base
-                else:
-                    name = base
+            elif scan_code == 157:  # Right Ctrl
+                name = 'right ctrl'
+                side = 'right'
+            elif scan_code == 42:  # Left Shift
+                name = 'shift'
+                side = 'left'
+            elif scan_code == 54:  # Right Shift
+                name = 'shift'
+                side = 'right'
+            elif scan_code == 56:  # Left Alt
+                name = 'left alt'
+                side = 'left'
+            elif scan_code == 184:  # Right Alt
+                name = 'right alt'
+                side = 'right'
+            elif scan_code == 91:  # Left Windows
+                name = 'windows'
+                side = 'left'
+            elif scan_code == 92:  # Right Windows
+                name = 'windows'
+                side = 'right'
             else:
-                name = raw_name
+                # For non-modifier keys, use the event name but normalize it
+                raw_name = (event.name or '').lower()
+                name = normalize_key_name(raw_name)
+                
+                # Check if it's a numpad key
+                if scan_code in self.numpad_scan_codes:
+                    sym = self.numpad_scan_codes[scan_code]
+                    name = f"num_{sym}"
 
             # Mark that a non-modifier was pressed
             if name not in ('ctrl','left ctrl','right ctrl','alt','left alt','right alt','shift','windows'):
@@ -3499,6 +3812,13 @@ class GameTextReader:
                         # Only proceed if exactly one modifier is still held and matches side/base
                         if len(held) == 1:
                             only = held[0]
+                            # Determine base from name
+                            base = None
+                            if 'ctrl' in name: base = 'ctrl'
+                            elif 'alt' in name: base = 'alt'
+                            elif 'shift' in name: base = 'shift'
+                            elif 'windows' in name: base = 'windows'
+                            
                             # Accept if same base and, when available, same side
                             if (base == 'ctrl' and (only in ['left ctrl','right ctrl'])) or \
                                (base == 'alt' and (only in ['left alt','right alt'])) or \
@@ -3594,7 +3914,7 @@ class GameTextReader:
             base_key = name
             if event.scan_code in self.numpad_scan_codes:
                 sym = self.numpad_scan_codes[event.scan_code]
-                base_key = f"numpad {sym}"
+                base_key = f"num_{sym}"
 
             # If base_key itself is a modifier, include it if not already in mods; otherwise avoid duplicate
             if base_key in ("ctrl", "shift", "alt", "windows", "left ctrl", "right ctrl", "left alt", "right alt"):
@@ -4553,11 +4873,18 @@ class GameTextReader:
                 
             print(f"Setting up hotkey for: {button.hotkey}")
             
+            # Ensure consistent keyboard layout for all hotkeys
+            current_layout = get_current_keyboard_layout()
+            print(f"Using keyboard layout: {current_layout} for consistent hotkey behavior")
+            
             # Define the hotkey handler function (accept optional event for keyboard lib compatibility)
             def hotkey_handler(event=None, *args, **kwargs):
                 try:
                     if self.setting_hotkey:
                         return
+                    # Check if info window is open - if so, allow hotkeys to work
+                    if hasattr(self, 'info_window_open') and self.info_window_open:
+                        pass  # Allow hotkeys to work even when info window is open
                     # If this is a single-key hotkey (no '+') and not a pure modifier, ignore when any modifier is held
                     try:
                         hk = getattr(button, 'hotkey', '') or ''
@@ -4607,6 +4934,9 @@ class GameTextReader:
                         not isinstance(event, mouse.ButtonEvent) or 
                         event.event_type != mouse.DOWN):
                         return False
+                    # Check if info window is open - if so, allow hotkeys to work
+                    if hasattr(self, 'info_window_open') and self.info_window_open:
+                        pass  # Allow hotkeys to work even when info window is open
                         
                     current_button = f'button{event.button}'
                     if current_button != button.hotkey:
@@ -4707,6 +5037,8 @@ class GameTextReader:
                             num_scancode = None
 
                         if num_scancode is not None:
+                            # Use targeted low-level hook for numpad keys to avoid interfering with other keys
+                            # This approach only triggers on the specific scan code, not all keyboard events
                             def on_kb_event(e):
                                 try:
                                     if (getattr(e, 'event_type', None) == 'down' and
@@ -4727,15 +5059,42 @@ class GameTextReader:
                                     pass
                             button.keyboard_hook = keyboard.hook(on_kb_event)
                             button.keyboard_hook_is_lowlevel = True
-                            print(f"Keyboard low-level hook set up for numpad scancode {num_scancode}")
+                            print(f"Keyboard targeted hook set up for numpad scancode {num_scancode}")
                         else:
                             # Fallback to string hotkey if scancode not found
                             button.keyboard_hook = keyboard.add_hotkey(hotkey_str, hotkey_handler, suppress=False)
                             print(f"Keyboard hotkey set up for {hotkey_str}")
                     else:
-                        # Non-numpad hotkeys use add_hotkey
-                        button.keyboard_hook = keyboard.add_hotkey(hotkey_str, hotkey_handler, suppress=False)
-                        print(f"Keyboard hotkey set up for {hotkey_str}")
+                        # Check if this is a special character that might not work with add_hotkey
+                        if hotkey_str in ['¨', "'", '`', '~', '^', '°', '§', '±', '²', '³', '¼', '½', '¾']:
+                            # For special characters, use a targeted hook based on scan code
+                            def on_special_char(e):
+                                try:
+                                    if (getattr(e, 'event_type', None) == 'down' and
+                                        not self.setting_hotkey and
+                                        not getattr(self, 'hotkeys_disabled_for_selection', False)):
+                                        # Check if the key name matches our special character
+                                        if getattr(e, 'name', '').lower() == hotkey_str.lower():
+                                            # Ignore when modifier keys are held to prevent false triggers
+                                            try:
+                                                if (keyboard.is_pressed('ctrl') or
+                                                    keyboard.is_pressed('alt') or
+                                                    keyboard.is_pressed('shift') or
+                                                    keyboard.is_pressed('windows')):
+                                                    return
+                                            except Exception:
+                                                pass
+                                            hotkey_handler()
+                                except Exception:
+                                    pass
+                            
+                            button.keyboard_hook = keyboard.hook(on_special_char)
+                            button.keyboard_hook_is_lowlevel = True
+                            print(f"Special character hook set up for '{hotkey_str}'")
+                        else:
+                            # Regular non-numpad hotkeys use add_hotkey
+                            button.keyboard_hook = keyboard.add_hotkey(hotkey_str, hotkey_handler, suppress=False)
+                            print(f"Keyboard hotkey set up for {hotkey_str}")
 
                     # Store handler for potential fallback
                     button._hotkey_callback = hotkey_handler
@@ -4752,16 +5111,36 @@ class GameTextReader:
                     # Test if the hotkey is working by trying to register it again
                     # If it fails, it means the hotkey is already registered and working
                     try:
-                        test_hook = keyboard.add_hotkey(hotkey_str, lambda: None, suppress=False)
-                        keyboard.remove_hotkey(hotkey_str)
-                        print(f"Hotkey {hotkey_str} is working properly")
-                        
-                        # Show status message for successful hotkey setup
-                        if hasattr(self, 'status_label'):
-                            self.status_label.config(text=f"Hotkey '{hotkey_str}' set successfully")
-                            if hasattr(self, '_feedback_timer') and self._feedback_timer:
-                                self.root.after_cancel(self._feedback_timer)
-                            self._feedback_timer = self.root.after(3000, lambda: self.status_label.config(text=""))
+                        if hotkey_str.startswith('num_'):
+                            # For numpad keys, we can't test with add_hotkey since we're using hooks
+                            # Just show success message
+                            print(f"Numpad hotkey {hotkey_str} set up with targeted hook")
+                            if hasattr(self, 'status_label'):
+                                self.status_label.config(text=f"Hotkey '{hotkey_str}' set successfully")
+                                if hasattr(self, '_feedback_timer') and self._feedback_timer:
+                                    self.root.after_cancel(self._feedback_timer)
+                                self._feedback_timer = self.root.after(3000, lambda: self.status_label.config(text=""))
+                        elif hotkey_str in ['¨', "'", '`', '~', '^', '°', '§', '±', '²', '³', '¼', '½', '¾']:
+                            # For special characters, we can't test with add_hotkey since we're using hooks
+                            # Just show success message
+                            print(f"Special character hotkey '{hotkey_str}' set up with targeted hook")
+                            if hasattr(self, 'status_label'):
+                                self.status_label.config(text=f"Hotkey '{hotkey_str}' set successfully")
+                                if hasattr(self, '_feedback_timer') and self._feedback_timer:
+                                    self.root.after_cancel(self._feedback_timer)
+                                self._feedback_timer = self.root.after(3000, lambda: self.status_label.config(text=""))
+                        else:
+                            # For regular non-numpad keys, test with add_hotkey
+                            test_hook = keyboard.add_hotkey(hotkey_str, lambda: None, suppress=False)
+                            keyboard.remove_hotkey(hotkey_str)
+                            print(f"Hotkey {hotkey_str} is working properly")
+                            
+                            # Show status message for successful hotkey setup
+                            if hasattr(self, 'status_label'):
+                                self.status_label.config(text=f"Hotkey '{hotkey_str}' set successfully")
+                                if hasattr(self, '_feedback_timer') and self._feedback_timer:
+                                    self.root.after_cancel(self._feedback_timer)
+                                self._feedback_timer = self.root.after(3000, lambda: self.status_label.config(text=""))
                             
                     except Exception as test_e:
                         print(f"Warning: Hotkey {hotkey_str} might not work in all applications: {test_e}")
@@ -4777,8 +5156,81 @@ class GameTextReader:
                     # Try alternative method for problematic hotkeys
                     try:
                         print(f"Trying alternative hotkey method for {button.hotkey}")
-                        button.keyboard_hook = keyboard.on_press(hotkey_handler)
-                        print(f"Alternative keyboard hook set up for {button.hotkey}")
+                        
+                        # Check if this is a special character
+                        if button.hotkey in ['¨', "'", '`', '~', '^', '°', '§', '±', '²', '³', '¼', '½', '¾']:
+                            # For special characters, use a targeted hook
+                            def on_special_char_fallback(e):
+                                try:
+                                    if (getattr(e, 'event_type', None) == 'down' and
+                                        not self.setting_hotkey and
+                                        not getattr(self, 'hotkeys_disabled_for_selection', False)):
+                                        # Check if the key name matches our special character
+                                        if getattr(e, 'name', '').lower() == button.hotkey.lower():
+                                            # Ignore when modifier keys are held to prevent false triggers
+                                            try:
+                                                if (keyboard.is_pressed('ctrl') or
+                                                    keyboard.is_pressed('alt') or
+                                                    keyboard.is_pressed('shift') or
+                                                    keyboard.is_pressed('windows')):
+                                                    return
+                                            except Exception:
+                                                pass
+                                            hotkey_handler()
+                                except Exception:
+                                    pass
+                            
+                            button.keyboard_hook = keyboard.hook(on_special_char_fallback)
+                            button.keyboard_hook_is_lowlevel = True
+                            print(f"Alternative special character hook set up for '{button.hotkey}'")
+                            return True
+                        elif button.hotkey.startswith('num_'):
+                            # For numpad keys, use targeted scan code approach
+                            num_key = button.hotkey.replace('num_', '')
+                            try:
+                                num_scancode = next(sc for sc, sym in self.numpad_scan_codes.items() if sym == num_key)
+                                if num_scancode is not None:
+                                    def on_specific_numpad(e):
+                                        try:
+                                            if (getattr(e, 'event_type', None) == 'down' and
+                                                getattr(e, 'scan_code', None) == num_scancode and
+                                                not self.setting_hotkey and
+                                                not getattr(self, 'hotkeys_disabled_for_selection', False)):
+                                                # Ignore when modifier keys are held to prevent false triggers
+                                                try:
+                                                    if (keyboard.is_pressed('ctrl') or
+                                                        keyboard.is_pressed('alt') or
+                                                        keyboard.is_pressed('shift') or
+                                                        keyboard.is_pressed('windows')):
+                                                        return
+                                                except Exception:
+                                                    pass
+                                                hotkey_handler()
+                                        except Exception:
+                                            pass
+                                    button.keyboard_hook = keyboard.hook(on_specific_numpad)
+                                    button.keyboard_hook_is_lowlevel = True
+                                    print(f"Alternative targeted numpad hook set up for {button.hotkey}")
+                                else:
+                                    # Fallback to name-based hook if scan code not found
+                                    def on_specific_key(e):
+                                        if getattr(e, 'name', '').lower() == num_key.lower():
+                                            hotkey_handler()
+                                    button.keyboard_hook = keyboard.on_press(on_specific_key)
+                                    button.keyboard_hook_is_lowlevel = True
+                                    print(f"Alternative name-based hook set up for {button.hotkey}")
+                            except Exception:
+                                # Last resort: use a more specific hook that only triggers on the specific key
+                                def on_specific_key(e):
+                                    if getattr(e, 'name', '').lower() == num_key.lower():
+                                        hotkey_handler()
+                                button.keyboard_hook = keyboard.on_press(on_specific_key)
+                                button.keyboard_hook_is_lowlevel = True
+                                print(f"Alternative specific key hook set up for {button.hotkey}")
+                        else:
+                            # For non-numpad keys, try add_hotkey again
+                            button.keyboard_hook = keyboard.add_hotkey(button.hotkey, hotkey_handler, suppress=False)
+                            print(f"Alternative hotkey set up for {button.hotkey}")
                     except Exception as alt_e:
                         print(f"Alternative method also failed: {alt_e}")
                         return False
@@ -5498,9 +5950,29 @@ class GameTextReader:
 def open_url(url):
     """Helper function to open URLs in the default browser"""
     try:
-        webbrowser.open(url)
+        print(f"Attempting to open URL: {url}")
+        result = webbrowser.open(url)
+        if result:
+            print(f"Successfully opened URL: {url}")
+        else:
+            print(f"Failed to open URL: {url} - webbrowser.open returned False")
     except Exception as e:
-        print(f"Error opening URL: {e}")
+        print(f"Error opening URL {url}: {e}")
+        # Try alternative method
+        try:
+            import subprocess
+            import platform
+            if platform.system() == "Windows":
+                subprocess.run(["start", url], shell=True, check=True)
+                print(f"Opened URL using Windows start command: {url}")
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.run(["open", url], check=True)
+                print(f"Opened URL using macOS open command: {url}")
+            else:  # Linux
+                subprocess.run(["xdg-open", url], check=True)
+                print(f"Opened URL using xdg-open: {url}")
+        except Exception as e2:
+            print(f"Alternative method also failed: {e2}")
 
 def capture_screen_area(x1, y1, x2, y2):
     """Capture screen area across multiple monitors using win32api"""
@@ -5564,9 +6036,31 @@ if __name__ == "__main__":
         root = TkinterDnD.Tk()
     else:
         root = tk.Tk()
+    
+    # Hide the window during setup to prevent the "stretching" effect
+    root.withdraw()
+    
+    # Set the window icon
+    try:
+        icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
+        if os.path.exists(icon_path):
+            root.iconbitmap(icon_path)
+            print(f"Set window icon to: {icon_path}")
+        else:
+            print(f"Icon file not found at: {icon_path}")
+    except Exception as e:
+        print(f"Error setting window icon: {e}")
+    
     app = GameTextReader(root)
     # Create permanent area at the top
     app.add_read_area(removable=False, editable_name=False, area_name="Auto Read")
+    
+    # Set the proper window size before it becomes visible
+    app.root.update_idletasks()  # Ensure all widgets are properly sized
+    app.resize_window(force=True)  # Calculate and set the optimal window size
+    
+    # Now show the window at the correct size
+    app.root.deiconify()
     # Try to load settings for Auto Read area from temp folder
     temp_path = os.path.join(tempfile.gettempdir(), 'GameReader', 'auto_read_settings.json')
     if os.path.exists(temp_path) and app.areas:
@@ -5658,5 +6152,4 @@ if __name__ == "__main__":
                     'threshold_enabled': False,
                 }
 
-    root.mainloop()
     root.mainloop()
