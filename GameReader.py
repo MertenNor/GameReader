@@ -226,6 +226,7 @@ Features:
 Bug Fixes:
 - Keyboard number keys and numpad number keys are now treated separately.
 - Voices now load properly from saved files.
+- The previous version did not warn about updates; this is now fixed.
 
 
 Thanks to everyone who has sent in feedback and bug reports!
@@ -1104,10 +1105,105 @@ def extract_changelog_from_code(code):
         return match.group(3).strip()
     return None
 
-def check_for_update(local_version, force=False):  #for testing the updatewindow. false for release.
+def show_update_popup(root, local_version, remote_version, remote_changelog):
+    """
+    Show the update popup window. Must be called from the main thread.
+    """
+    import tkinter as tk
+    from tkinter import ttk
+    
+    popup = tk.Toplevel(root)
+    popup.title("Update Available")
+    popup.geometry("750x350")  # Set initial size
+    popup.minsize(400, 150)    # Set minimum size
+    
+    # Set the window icon
+    try:
+        icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
+        if os.path.exists(icon_path):
+            popup.iconbitmap(icon_path)
+    except Exception as e:
+        print(f"Error setting update popup icon: {e}")
+    
+    # Make window resizable
+    popup.resizable(True, True)
+    
+    # Configure grid weights
+    popup.grid_rowconfigure(0, weight=1)
+    popup.grid_columnconfigure(0, weight=1)
+    
+    # Create main frame with padding
+    main_frame = ttk.Frame(popup, padding="20")
+    main_frame.grid(row=0, column=0, sticky='nsew')
+    main_frame.grid_rowconfigure(1, weight=1)  # Make text area expandable
+    main_frame.grid_columnconfigure(0, weight=1)
+    
+    # Version info
+    version_frame = ttk.Frame(main_frame)
+    version_frame.grid(row=0, column=0, sticky='w', pady=(0, 15))
+    
+    ttk.Label(version_frame, text="A new version of GameReader is available!", 
+             font=('Helvetica', 12, 'bold')).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 10))
+    
+    ttk.Label(version_frame, text=f"Current version: {local_version}", font=('Helvetica', 10)).grid(row=1, column=0, sticky='w')
+    ttk.Label(version_frame, text=f"Latest version: {remote_version}", font=('Helvetica', 10)).grid(row=2, column=0, sticky='w')
+    
+    # Changelog section
+    ttk.Label(main_frame, text="What's new:", font=('Helvetica', 10, 'bold')).grid(row=1, column=0, sticky='nw', pady=(10, 5))
+    
+    # Create a frame for the text widget and scrollbar
+    text_frame = ttk.Frame(main_frame)
+    text_frame.grid(row=2, column=0, sticky='nsew', pady=(0, 15))
+    text_frame.grid_rowconfigure(0, weight=1)
+    text_frame.grid_columnconfigure(0, weight=1)
+    
+    # Add text widget with scrollbar
+    text = tk.Text(text_frame, wrap=tk.WORD, width=60, height=10, 
+                 padx=10, pady=10, relief='flat', bg='#f0f0f0')
+    scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text.yview)
+    text.configure(yscrollcommand=scrollbar.set)
+    
+    text.grid(row=0, column=0, sticky='nsew')
+    scrollbar.grid(row=0, column=1, sticky='ns')
+    
+    # Insert changelog text
+    changelog = remote_changelog if remote_changelog else "No changelog available."
+    text.insert('1.0', changelog)
+    text.config(state='disabled')  # Make text read-only
+    
+    # Buttons frame
+    button_frame = ttk.Frame(main_frame)
+    button_frame.grid(row=3, column=0, sticky='e')
+    
+    def open_github():
+        import webbrowser
+        webbrowser.open('https://github.com/MertenNor/GameReader/releases')
+        popup.destroy()
+    
+    def close_popup():
+        popup.destroy()
+    
+    ttk.Button(button_frame, text="Later...", command=close_popup).pack(side='right', padx=5)
+    ttk.Button(button_frame, text="Open download page", command=open_github).pack(side='right', padx=5)
+    
+    # Center the popup on screen
+    popup.update_idletasks()
+    width = popup.winfo_width()
+    height = popup.winfo_height()
+    x = (popup.winfo_screenwidth() // 2) - (width // 2)
+    y = (popup.winfo_screenheight() // 2) - (height // 2)
+    popup.geometry(f'{width}x{height}+{x}+{y}')
+    
+    # Make popup modal
+    popup.transient(root)
+    popup.grab_set()
+    popup.wait_window()
+
+def check_for_update(root, local_version, force=False):  #for testing the updatewindow. false for release.
     """
     Fetch the remote GameReader.py from GitHub, extract version and changelog, compare to local_version.
     If remote version is newer or force=True, show a popup.
+    Must be called from a background thread. The popup will be scheduled on the main thread.
     """
     GITHUB_RAW_URL = "https://raw.githubusercontent.com/MertenNor/GameReader/main/GameReader.py"
     try:
@@ -1117,98 +1213,16 @@ def check_for_update(local_version, force=False):  #for testing the updatewindow
             remote_version = extract_version_from_code(remote_content)
             remote_changelog = extract_changelog_from_code(remote_content)
             if force or (remote_version and version_tuple(remote_version) > version_tuple(local_version)):
-                # Create a custom popup window
-                import tkinter as tk
-                from tkinter import ttk
-                
-                popup = tk.Toplevel()
-                popup.title("Update Available")
-                popup.geometry("750x350")  # Set initial size
-                popup.minsize(400, 150)    # Set minimum size
-                
-                # Set the window icon
-                try:
-                    icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
-                    if os.path.exists(icon_path):
-                        popup.iconbitmap(icon_path)
-                except Exception as e:
-                    print(f"Error setting update popup icon: {e}")
-                
-                # Make window resizable
-                popup.resizable(True, True)
-                
-                # Configure grid weights
-                popup.grid_rowconfigure(0, weight=1)
-                popup.grid_columnconfigure(0, weight=1)
-                
-                # Create main frame with padding
-                main_frame = ttk.Frame(popup, padding="20")
-                main_frame.grid(row=0, column=0, sticky='nsew')
-                main_frame.grid_rowconfigure(1, weight=1)  # Make text area expandable
-                main_frame.grid_columnconfigure(0, weight=1)
-                
-                # Version info
-                version_frame = ttk.Frame(main_frame)
-                version_frame.grid(row=0, column=0, sticky='w', pady=(0, 15))
-                
-                ttk.Label(version_frame, text="A new version of GameReader is available!", 
-                         font=('Helvetica', 12, 'bold')).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 10))
-                
-                ttk.Label(version_frame, text=f"Current version: {local_version}", font=('Helvetica', 10)).grid(row=1, column=0, sticky='w')
-                ttk.Label(version_frame, text=f"Latest version: {remote_version}", font=('Helvetica', 10)).grid(row=2, column=0, sticky='w')
-                
-                # Changelog section
-                ttk.Label(main_frame, text="What's new:", font=('Helvetica', 10, 'bold')).grid(row=1, column=0, sticky='nw', pady=(10, 5))
-                
-                # Create a frame for the text widget and scrollbar
-                text_frame = ttk.Frame(main_frame)
-                text_frame.grid(row=2, column=0, sticky='nsew', pady=(0, 15))
-                text_frame.grid_rowconfigure(0, weight=1)
-                text_frame.grid_columnconfigure(0, weight=1)
-                
-                # Add text widget with scrollbar
-                text = tk.Text(text_frame, wrap=tk.WORD, width=60, height=10, 
-                             padx=10, pady=10, relief='flat', bg='#f0f0f0')
-                scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text.yview)
-                text.configure(yscrollcommand=scrollbar.set)
-                
-                text.grid(row=0, column=0, sticky='nsew')
-                scrollbar.grid(row=0, column=1, sticky='ns')
-                
-                # Insert changelog text
-                changelog = remote_changelog if remote_changelog else "No changelog available."
-                text.insert('1.0', changelog)
-                text.config(state='disabled')  # Make text read-only
-                
-                # Buttons frame
-                button_frame = ttk.Frame(main_frame)
-                button_frame.grid(row=3, column=0, sticky='e')
-                
-                def open_github():
-                    import webbrowser
-                    webbrowser.open('https://github.com/MertenNor/GameReader/releases')
-                    popup.destroy()
-                
-                def close_popup():
-                    popup.destroy()
-                
-                ttk.Button(button_frame, text="Later...", command=close_popup).pack(side='right', padx=5)
-                ttk.Button(button_frame, text="Open download page", command=open_github).pack(side='right', padx=5)
-                
-                # Center the popup on screen
-                popup.update_idletasks()
-                width = popup.winfo_width()
-                height = popup.winfo_height()
-                x = (popup.winfo_screenwidth() // 2) - (width // 2)
-                y = (popup.winfo_screenheight() // 2) - (height // 2)
-                popup.geometry(f'{width}x{height}+{x}+{y}')
-                
-                # Make popup modal
-                popup.transient(tk._default_root or popup)
-                popup.grab_set()
-                popup.wait_window()
+                # Schedule popup creation on main thread (small delay ensures mainloop is processing)
+                root.after(100, lambda: show_update_popup(root, local_version, remote_version or "Unknown", remote_changelog))
+        elif force:
+            # If force=True but request failed, still show popup with error message
+            root.after(100, lambda: show_update_popup(root, local_version, "Unknown", "Unable to fetch update information. Please check your internet connection."))
     except Exception as e:
-        # Fail silently if no internet or any error
+        # If force=True, show popup even on error
+        if force:
+            root.after(100, lambda: show_update_popup(root, local_version, "Unknown", "Unable to fetch update information. Please check your internet connection."))
+        # Otherwise fail silently if no internet or any error
         pass
 
 def version_tuple(v):
@@ -1998,9 +2012,12 @@ class GameTextReader:
         self.root = root
         self.root.title(f"Game Reader v{APP_VERSION}")
         # --- Update check on startup ---
+        # Schedule update check after mainloop starts (delay ensures GUI is fully loaded)
         local_version = APP_VERSION
         FORCE_UPDATE_CHECK = False  # Set to True to force update popup, False for normal behavior
-        threading.Thread(target=lambda: check_for_update(local_version, force=FORCE_UPDATE_CHECK), daemon=True).start()
+        def start_update_check():
+            threading.Thread(target=lambda: check_for_update(self.root, local_version, force=FORCE_UPDATE_CHECK), daemon=True).start()
+        self.root.after(500, start_update_check)  # Start check 500ms after GUI is ready
         # --- End update check ---
         
         # Don't set initial geometry here - let it be calculated after GUI setup
