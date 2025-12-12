@@ -14,7 +14,6 @@ import os
 import random
 import re
 import sys
-import shutil
 import tempfile
 import threading
 import time
@@ -155,9 +154,9 @@ def suggest_alternative_key(special_char):
         '¶': 'p',
         '·': '.',
         '¸': ',',
-        '¹': '1',
-        '²': '2',
-        '³': '3'
+        '¹': '1'​【𝟯𝟬 𝗰𝗺】,
+        '²': '2'​【𝟲𝟭 𝗰𝗺】,
+        '³': '3'​【𝟵𝟭 𝗰𝗺】
     }
     
     return alternatives.get(special_char, None)
@@ -193,17 +192,6 @@ def detect_ctrl_keys():
     return left_ctrl_pressed, right_ctrl_pressed
 
 
-# GitHub repository configuration
-# Update this if you rename your GitHub repository
-GITHUB_REPO = "MertenNor/GameReader"  # Format: "username/repository-name"
-
-# Update server configuration (Google Apps Script)
-# Replace YOUR_SCRIPT_ID with your actual Google Apps Script Web App URL
-# Get this URL from: https://script.google.com → Deploy → Web app → Copy URL
-UPDATE_SERVER_URL = "URL"
-# Set to None to disable update checking, or use the old GitHub method
-USE_GOOGLE_SCRIPT_UPDATE = True  # Set to False to use old GitHub raw file method
-
 
 # Try to import tkinterdnd2 for drag and drop functionality
 try:
@@ -220,561 +208,29 @@ except AttributeError:
 except Exception as e:
     print(f"Warning: Could not set DPI awareness: {e}")
 
-APP_NAME = "GameTextReader"
-APP_VERSION = "0.9.0.1"
-APP_SLUG = APP_NAME.lower().replace(" ", "")
-APP_DOCUMENTS_DIR = os.path.join(os.path.expanduser('~'), 'Documents', APP_NAME)
-APP_SETTINGS_FILENAME = f"{APP_SLUG}_settings.json"
-APP_SETTINGS_PATH = os.path.join(APP_DOCUMENTS_DIR, APP_SETTINGS_FILENAME)
-APP_SETTINGS_BACKUP_FILENAME = f".{APP_SETTINGS_FILENAME}.backup"
-APP_AUTO_READ_SETTINGS_PATH = os.path.join(APP_DOCUMENTS_DIR, 'auto_read_settings.json')
-APP_LAYOUTS_DIR = os.path.join(APP_DOCUMENTS_DIR, 'Layouts')
+APP_VERSION = "0.9"
 
-def migrate_legacy_settings_file(root=None, app=None):
-    """Offer to copy legacy settings into the new save location on first launch."""
-    try:
-        def copy_directory_contents(src, dst):
-            """Copy all files from src into dst, preserving structure."""
-            for dirpath, dirnames, filenames in os.walk(src):
-                rel = os.path.relpath(dirpath, src)
-                target_dir = os.path.join(dst, rel) if rel != "." else dst
-                os.makedirs(target_dir, exist_ok=True)
-                for name in filenames:
-                    src_file = os.path.join(dirpath, name)
-                    dst_file = os.path.join(target_dir, name)
-                    shutil.copy2(src_file, dst_file)
-
-        def copy_json_files(src, dst, skip_names):
-            """Copy top-level JSON files from src to dst unless skipped; do not overwrite existing."""
-            if not os.path.isdir(src):
-                return
-            os.makedirs(dst, exist_ok=True)
-            for name in os.listdir(src):
-                if not name.lower().endswith(".json"):
-                    continue
-                if name in skip_names:
-                    continue
-                src_file = os.path.join(src, name)
-                if not os.path.isfile(src_file):
-                    continue
-                dst_file = os.path.join(dst, name)
-                if os.path.exists(dst_file):
-                    print(f"Skipped copying {name} (already exists at destination).")
-                    continue
-                try:
-                    shutil.copy2(src_file, dst_file)
-                    print(f"Copied legacy file {name} to {dst_file}")
-                except Exception as e:
-                    print(f"Warning: Failed to copy {name}: {e}")
-
-        os.makedirs(APP_DOCUMENTS_DIR, exist_ok=True)
-        new_path = APP_SETTINGS_PATH
-        # If current app folder already has the required files, skip legacy search/prompt
-        current_settings_exists = os.path.exists(new_path)
-        current_units_exists = os.path.exists(os.path.join(APP_DOCUMENTS_DIR, "gamer_units.json"))
-        current_layouts_exist = os.path.isdir(APP_LAYOUTS_DIR) and any(
-            os.path.isfile(os.path.join(APP_LAYOUTS_DIR, f)) for f in os.listdir(APP_LAYOUTS_DIR)
-        )
-        if current_settings_exists and current_units_exists and current_layouts_exist:
-            return
-        
-        # List of legacy app names to search for
-        LEGACY_APP_NAMES = ["GameReader"]
-        
-        legacy_paths = [
-            os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', 'gamereader_settings.json'),
-            os.path.join(tempfile.gettempdir(), 'GameReader', 'gamereader_settings.json'),
-            os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', APP_SETTINGS_FILENAME),
-            os.path.join(tempfile.gettempdir(), 'GameReader', APP_SETTINGS_FILENAME),
-            # Nested inside old GameReader\<APP_NAME>
-            os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', APP_NAME, 'gamereader_settings.json'),
-            os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', APP_NAME, APP_SETTINGS_FILENAME),
-        ]
-        
-        # Add paths for each legacy app name
-        for legacy_name in LEGACY_APP_NAMES:
-            # Direct Documents folder for legacy app name
-            legacy_paths.extend([
-                os.path.join(os.path.expanduser('~'), 'Documents', legacy_name, 'gamereader_settings.json'),
-                os.path.join(os.path.expanduser('~'), 'Documents', legacy_name, APP_SETTINGS_FILENAME),
-            ])
-            # Nested inside GameReader\<legacy_name>
-            legacy_paths.extend([
-                os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', legacy_name, 'gamereader_settings.json'),
-                os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', legacy_name, APP_SETTINGS_FILENAME),
-            ])
-            # Temp folder paths
-            legacy_paths.extend([
-                os.path.join(tempfile.gettempdir(), 'GameReader', legacy_name, 'gamereader_settings.json'),
-                os.path.join(tempfile.gettempdir(), 'GameReader', legacy_name, APP_SETTINGS_FILENAME),
-            ])
-
-        candidate_dirs = {
-            os.path.dirname(p) for p in legacy_paths
-        }
-        # Add common legacy folders even if no settings file exists there
-        candidate_dirs.update({
-            os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader'),
-            os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', APP_NAME),
-            os.path.join(tempfile.gettempdir(), 'GameReader'),
-            os.path.join(tempfile.gettempdir(), 'GameReader', APP_NAME),
-        })
-        # Add directories for each legacy app name
-        for legacy_name in LEGACY_APP_NAMES:
-            candidate_dirs.update({
-                os.path.join(os.path.expanduser('~'), 'Documents', legacy_name),
-                os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', legacy_name),
-                os.path.join(tempfile.gettempdir(), 'GameReader', legacy_name),
-            })
-        # Exclude the current app directory from legacy search
-        candidate_dirs = {d for d in candidate_dirs if d and os.path.abspath(d) != os.path.abspath(APP_DOCUMENTS_DIR)}
-
-        available = [p for p in legacy_paths if os.path.exists(p)]
-
-        selected_path = None
-        copy_layouts = False
-        copy_units = False
-        delete_after_copy = False
-        existing_settings = os.path.exists(new_path)
-        copied_settings = False
-        copied_units = False
-
-        def has_assets(folder):
-            return (
-                os.path.isdir(os.path.join(folder, "Layouts")) or
-                os.path.exists(os.path.join(folder, "gamer_units.json")) or
-                any(
-                    name.lower().endswith(".json")
-                    for name in os.listdir(folder) if os.path.isfile(os.path.join(folder, name))
-                )
-            )
-
-        def pick_best_dir(dirs):
-            """Prefer a dir that is not the current app folder and that has layouts or gamer_units."""
-            dirs = [d for d in dirs if os.path.isdir(d)]
-            if not dirs:
-                return None
-            # 1) prefer with assets and not current app folder
-            for d in dirs:
-                if d != APP_DOCUMENTS_DIR and has_assets(d):
-                    return d
-            # 2) prefer any with assets
-            for d in dirs:
-                if has_assets(d):
-                    return d
-            # 3) prefer not current app folder
-            for d in dirs:
-                if d != APP_DOCUMENTS_DIR:
-                    return d
-            # 4) fallback first
-            return dirs[0]
-
-        # Collect all candidate dirs that actually have assets (layouts/units/json), excluding current app dir
-        asset_dirs = [d for d in candidate_dirs if os.path.isdir(d) and has_assets(d) and os.path.abspath(d) != os.path.abspath(APP_DOCUMENTS_DIR)]
-
-        # If we have no settings files and no assets, nothing to migrate
-        if not available and not asset_dirs:
-            return
-
-        # If we have no settings files but still have legacy assets, pick the best folder anyway
-        best_dir_from_assets = pick_best_dir(asset_dirs) if not available else None
-
-        best_dir = None
-
-        options_for_prompt = []
-        for p in available:
-            options_for_prompt.append(("file", p))
-        for d in asset_dirs:
-            options_for_prompt.append(("dir", d))
-
-        reload_requested = False
-
-        if root is not None and options_for_prompt:
-            # Ask the user which legacy file or asset folder to import
-            win = tk.Toplevel(root)
-            win.title("Import Previous Settings")
-            win.resizable(False, False)
-            win.transient(root)
-            win.grab_set()
-            win.lift()
-            try:
-                icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
-                if os.path.exists(icon_path):
-                    win.iconbitmap(icon_path)
-            except Exception:
-                pass
-
-            tk.Label(
-                win,
-                text=(
-                    "Detected settings from an older install.\n"
-                    "Choose which file to copy into the new saves folder, "
-                    "or skip to start fresh."
-                ),
-                justify="left",
-                wraplength=420,
-            ).pack(padx=15, pady=(15, 10))
-
-            # Pick initial option
-            initial_value = None
-            if available:
-                initial_dir = pick_best_dir([os.path.dirname(p) for p in available])
-                initial_path = next((p for p in available if os.path.dirname(p) == initial_dir), available[0])
-                initial_value = f"file:{initial_path}"
-            elif asset_dirs:
-                initial_dir = pick_best_dir(asset_dirs)
-                initial_value = f"dir:{initial_dir}"
-
-            choice_var = tk.StringVar(value=initial_value)
-
-            for kind, path in options_for_prompt:
-                label = path
-                try:
-                    if kind == "file":
-                        mtime = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
-                        label = f"{path} (last updated {mtime})"
-                    else:
-                        label = f"{path} (folder with layouts/JSON)"
-                except Exception:
-                    pass
-
-                tk.Radiobutton(
-                    win,
-                    text=label,
-                    variable=choice_var,
-                    value=f"{kind}:{path}",
-                    anchor="w",
-                    justify="left",
-                    wraplength=420
-                ).pack(fill="x", padx=20, pady=2)
-
-            tk.Label(
-                win,
-                text=f"Selected file will be copied to:\n{new_path}",
-                fg="#555555",
-                justify="left",
-                wraplength=420,
-            ).pack(padx=15, pady=(10, 10))
-
-            copy_layouts_var = tk.BooleanVar(value=True)
-            tk.Checkbutton(
-                win,
-                text="Copy layouts from the old app folder (Layouts/)",
-                variable=copy_layouts_var,
-                anchor="w",
-                justify="left",
-                wraplength=420,
-            ).pack(fill="x", padx=15, pady=(0, 4))
-
-            copy_units_var = tk.BooleanVar(value=True)
-            tk.Checkbutton(
-                win,
-                text="Copy gamer_units.json from the old app folder",
-                variable=copy_units_var,
-                anchor="w",
-                justify="left",
-                wraplength=420,
-            ).pack(fill="x", padx=15, pady=(0, 4))
-
-            delete_var = tk.BooleanVar(value=False)
-            tk.Checkbutton(
-                win,
-                text="Delete the old settings file after it is copied",
-                variable=delete_var,
-                anchor="w",
-                justify="left",
-                wraplength=420,
-            ).pack(fill="x", padx=15, pady=(0, 4))
-
-            delete_folder_var = tk.BooleanVar(value=False)
-            tk.Checkbutton(
-                win,
-                text="Delete the old app folder after copying (if possible)",
-                variable=delete_folder_var,
-                anchor="w",
-                justify="left",
-                wraplength=420,
-            ).pack(fill="x", padx=15, pady=(0, 10))
-
-            decision = {"path": None, "delete": False, "dir": None}
-
-            def confirm_copy():
-                sel = choice_var.get()
-                if sel.startswith("file:"):
-                    decision["path"] = sel[len("file:"):]
-                    decision["dir"] = os.path.dirname(decision["path"])
-                elif sel.startswith("dir:"):
-                    decision["path"] = None
-                    decision["dir"] = sel[len("dir:"):]
-                decision["delete"] = delete_var.get()
-                decision["copy_layouts"] = copy_layouts_var.get()
-                decision["copy_units"] = copy_units_var.get()
-                decision["delete_folder"] = delete_folder_var.get()
-                nonlocal reload_requested
-                reload_requested = True
-                win.destroy()
-
-            def skip_copy():
-                decision["path"] = None
-                decision["dir"] = None
-                decision["delete"] = False
-                decision["copy_layouts"] = False
-                decision["copy_units"] = False
-                decision["delete_folder"] = False
-                win.destroy()
-
-            button_frame = tk.Frame(win)
-            button_frame.pack(fill="x", pady=(0, 15))
-            tk.Button(button_frame, text="Copy selected", command=confirm_copy, width=14).pack(side="right", padx=(5, 15))
-            tk.Button(button_frame, text="Skip", command=skip_copy, width=10).pack(side="right")
-
-            win.protocol("WM_DELETE_WINDOW", skip_copy)
-            root.wait_window(win)
-            selected_path = decision["path"]
-            best_dir = decision.get("dir")
-            delete_after_copy = decision.get("delete", False)
-            copy_layouts = decision.get("copy_layouts", False)
-            copy_units = decision.get("copy_units", False)
-            delete_folder = decision.get("delete_folder", False)
-        elif available:
-            # Fallback: automatically pick the best available legacy file
-            selected_path = pick_best_dir([os.path.dirname(p) for p in available])
-            selected_path = selected_path and next((p for p in available if os.path.dirname(p) == selected_path), None)
-            delete_after_copy = False
-            copy_layouts = True
-            copy_units = True
-            delete_folder = False
-            best_dir = os.path.dirname(selected_path) if selected_path else None
-            reload_requested = True
-        else:
-            # No settings file found, but we have assets to copy
-            selected_path = None
-            best_dir = best_dir_from_assets
-            delete_after_copy = False
-            # Only copy layouts/units if they exist in any asset folder
-            copy_layouts = any(os.path.isdir(os.path.join(d, "Layouts")) for d in asset_dirs)
-            copy_units = any(os.path.exists(os.path.join(d, "gamer_units.json")) for d in asset_dirs)
-            delete_folder = False
-            reload_requested = True
-
-        # Build list of asset dirs to copy from (include selected dir if not already)
-        asset_dirs_to_copy = []
-        for d in asset_dirs:
-            if d not in asset_dirs_to_copy:
-                asset_dirs_to_copy.append(d)
-        if best_dir and best_dir not in asset_dirs_to_copy and os.path.isdir(best_dir):
-            asset_dirs_to_copy.append(best_dir)
-
-        def try_copy_settings_from_dir(src_dir):
-            """Copy a legacy settings file from a directory into the new settings path."""
-            candidates = [
-                os.path.join(src_dir, APP_SETTINGS_FILENAME),
-                os.path.join(src_dir, "gamereader_settings.json"),
-            ]
-            # Add any *_settings.json files in the directory
-            try:
-                for name in os.listdir(src_dir):
-                    if name.lower().endswith("_settings.json"):
-                        candidates.append(os.path.join(src_dir, name))
-            except Exception:
-                pass
-
-            for cand in candidates:
-                if os.path.exists(cand) and os.path.isfile(cand):
-                    try:
-                        shutil.copy2(cand, new_path)
-                        print(f"Migrated legacy settings file from {cand} to {new_path}")
-                        # Remove legacy filename if it's different from the new one
-                        if os.path.basename(cand) != APP_SETTINGS_FILENAME:
-                            try:
-                                os.remove(cand)
-                                print(f"Removed old settings file: {cand}")
-                            except Exception as e:
-                                print(f"Warning: Copied settings but could not delete old file {cand}: {e}")
-                        return True
-                    except Exception as e:
-                        print(f"Warning: Failed to copy settings from {cand}: {e}")
-            return False
-
-        if selected_path and os.path.exists(selected_path):
-            # Always copy/rename the legacy settings into the new filename
-            shutil.copy2(selected_path, new_path)
-            print(f"Migrated legacy settings file from {selected_path} to {new_path}")
-            copied_settings = True
-            # Remove legacy filename if it's different from the new one
-            legacy_name = os.path.basename(selected_path)
-            if legacy_name != APP_SETTINGS_FILENAME:
-                try:
-                    os.remove(selected_path)
-                    print(f"Removed old settings file: {selected_path}")
-                except Exception as e:
-                    print(f"Warning: Copied settings but could not delete old file {selected_path}: {e}")
-        elif selected_path and not os.path.exists(selected_path):
-            print(f"Selected legacy settings file not found at {selected_path}, skipping settings copy.")
-
-        # If no explicit file was chosen but a dir was, try to pull settings from that dir
-        if not copied_settings and best_dir and os.path.isdir(best_dir):
-            if try_copy_settings_from_dir(best_dir):
-                copied_settings = True
-                # Attempt to remove legacy-named file in that dir
-                old_file = os.path.join(best_dir, "gamereader_settings.json")
-                if os.path.exists(old_file) and os.path.basename(old_file) != APP_SETTINGS_FILENAME:
-                    try:
-                        os.remove(old_file)
-                        print(f"Removed old settings file: {old_file}")
-                    except Exception as e:
-                        print(f"Warning: Copied settings but could not delete old file {old_file}: {e}")
-
-        # As a fallback, scan all asset dirs for a settings file if none copied yet
-        if not copied_settings:
-            for d in asset_dirs_to_copy:
-                if try_copy_settings_from_dir(d):
-                    copied_settings = True
-                    reload_requested = True
-                    # Attempt to remove legacy-named file in that dir
-                    old_file = os.path.join(d, "gamereader_settings.json")
-                    if os.path.exists(old_file) and os.path.basename(old_file) != APP_SETTINGS_FILENAME:
-                        try:
-                            os.remove(old_file)
-                            print(f"Removed old settings file: {old_file}")
-                        except Exception as e:
-                            print(f"Warning: Copied settings but could not delete old file {old_file}: {e}")
-                    break
-
-        if asset_dirs_to_copy and copy_layouts:
-            found_layouts = False
-            for d in asset_dirs_to_copy:
-                legacy_layouts = os.path.join(d, "Layouts")
-                if os.path.isdir(legacy_layouts):
-                    found_layouts = True
-                    try:
-                        os.makedirs(APP_LAYOUTS_DIR, exist_ok=True)
-                        copy_directory_contents(legacy_layouts, APP_LAYOUTS_DIR)
-                        print(f"Copied legacy layouts from {legacy_layouts} to {APP_LAYOUTS_DIR}")
-                    except Exception as e:
-                        print(f"Warning: Failed to copy legacy layouts from {legacy_layouts}: {e}")
-                else:
-                    sibling_layouts = os.path.join(os.path.dirname(d), "GameReader", "Layouts")
-                    if os.path.isdir(sibling_layouts):
-                        found_layouts = True
-                        try:
-                            os.makedirs(APP_LAYOUTS_DIR, exist_ok=True)
-                            copy_directory_contents(sibling_layouts, APP_LAYOUTS_DIR)
-                            print(f"Copied legacy layouts from {sibling_layouts} to {APP_LAYOUTS_DIR}")
-                        except Exception as e:
-                            print(f"Warning: Failed to copy legacy layouts from sibling folder {sibling_layouts}: {e}")
-            if not found_layouts:
-                print("No legacy Layouts folder found to copy.")
-
-        if asset_dirs_to_copy and copy_units:
-            found_units = False
-            for d in asset_dirs_to_copy:
-                legacy_units = os.path.join(d, "gamer_units.json")
-                if os.path.exists(legacy_units):
-                    found_units = True
-                    try:
-                        dest_units = os.path.join(APP_DOCUMENTS_DIR, "gamer_units.json")
-                        shutil.copy2(legacy_units, dest_units)
-                        print(f"Copied gamer_units.json from {legacy_units} to {dest_units}")
-                        copied_units = True
-                    except Exception as e:
-                        print(f"Warning: Failed to copy gamer_units.json from {legacy_units}: {e}")
-            if not found_units:
-                print("No gamer_units.json found to copy.")
-
-        if asset_dirs_to_copy:
-            # Copy any other JSON files from each legacy app folder (top-level only) without overwriting
-            for d in asset_dirs_to_copy:
-                try:
-                    skip = {
-                        os.path.basename(new_path),
-                        "gamer_units.json",
-                    }
-                    copy_json_files(d, APP_DOCUMENTS_DIR, skip_names=skip)
-                except Exception as e:
-                    print(f"Warning: Failed to copy additional legacy JSON files from {d}: {e}")
-
-        if selected_path and delete_after_copy and os.path.exists(selected_path):
-            try:
-                os.remove(selected_path)
-                print(f"Deleted legacy settings file at {selected_path}")
-            except Exception as e:
-                print(f"Warning: Copied settings but could not delete legacy file: {e}")
-
-        if delete_folder and best_dir:
-            try:
-                if best_dir and os.path.isdir(best_dir) and best_dir != APP_DOCUMENTS_DIR:
-                    shutil.rmtree(best_dir)
-                    print(f"Deleted legacy app folder at {best_dir}")
-                else:
-                    print("Skipped deleting legacy folder (same as current folder or invalid).")
-            except Exception as e:
-                print(f"Warning: Could not delete legacy app folder: {e}")
-        if not asset_dirs_to_copy and not best_dir:
-            print("No legacy folder found to copy.")
-
-        # If nothing was copied (skip or none found), ensure fresh settings and gamer_units exist
-        if not copied_settings and not os.path.exists(new_path):
-            try:
-                os.makedirs(APP_DOCUMENTS_DIR, exist_ok=True)
-                with open(new_path, 'w', encoding='utf-8') as f:
-                    json.dump({}, f, indent=4)
-                print(f"Created new settings file at {new_path}")
-            except Exception as e:
-                print(f"Warning: Could not create new settings file: {e}")
-
-        gamer_units_path = os.path.join(APP_DOCUMENTS_DIR, "gamer_units.json")
-        if not copied_units and not os.path.exists(gamer_units_path):
-            try:
-                os.makedirs(APP_DOCUMENTS_DIR, exist_ok=True)
-                with open(gamer_units_path, 'w', encoding='utf-8') as f:
-                    json.dump({}, f, indent=4)
-                print(f"Created new gamer_units.json at {gamer_units_path}")
-            except Exception as e:
-                print(f"Warning: Could not create new gamer_units.json: {e}")
-
-        # After migration, reload settings and game units into the running app (delayed to allow file writes)
-        if app and root and reload_requested:
-            def _reload_after_copy():
-                try:
-                    app.load_edit_view_settings()
-                except Exception as e:
-                    print(f"Warning: Failed to reload settings after migration: {e}")
-                try:
-                    app.game_units = app.load_game_units()
-                except Exception as e:
-                    print(f"Warning: Failed to reload game units after migration: {e}")
-                try:
-                    last_layout = app.load_last_layout_path()
-                    if last_layout and os.path.exists(last_layout):
-                        app._load_layout_file(last_layout)
-                        print(f"Reloaded layout after migration: {last_layout}")
-                except Exception as e:
-                    print(f"Warning: Failed to reload layout after migration: {e}")
-            try:
-                root.after(1000, _reload_after_copy)
-            except Exception as e:
-                print(f"Warning: Could not schedule settings reload: {e}")
-    except Exception as e:
-        print(f"Warning: Could not migrate legacy settings file: {e}")
-
-CHANGELOG = fr"""
+CHANGELOG = r"""
 0.9.0.1:
 
 NAME CHANGE!
 GameReader will now be called GameTextReader from now on.
-GitHub Repository wil change its name to GameTextReader, 01.01.2026 when done users on 0.9 or older will not be notified about new releases. 
+GitHub Repository will change its name to GameTextReader, 01.01.2026, when done, users on 0.9 or older will not be notified about new releases. 
 
-Feautures: 
-- Added a new way to revice information about updates and or news inside the info/help window.
-- the program will look for your old GameReader files and promt you about moving them to the new GameTextReader folder.
+Features: 
+- Added a new way to review information about updates and or news inside the info/help window.
+- The program will look for your old GameReader files and prompt you about moving them to the new GameTextReader folder.
 
+
+
+Thanks to everyone who has sent in feedback and bug reports!
+
+Thanks for using GameReader!
 """
 
 
 # Create a StringIO buffer to capture print statements
 log_buffer = io.StringIO()
-
 # Store original stdout for restoration
 sys.stdout_original = sys.stdout
 
@@ -828,7 +284,7 @@ def show_thinkr_warning(game_reader, area_name):
     msg.pack(pady=(28, 6))
 
     # Add OK button
-    btn = tk.Button(win, text="OK", width=12, height=1, font=("Helvetica", 11, "bold"), relief="raised", bd=2)
+    btn = tk.Button(win, text="OK", width=12, height=1, font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"), relief="raised", bd=2)
     btn.pack(pady=(6, 10))
 
     # Focus the button for keyboard users
@@ -901,7 +357,7 @@ def show_hotkey_conflict_warning(game_reader, hotkey, conflict_locations):
     msg.pack(pady=(20, 10), padx=10)
 
     # Add OK button
-    btn = tk.Button(win, text="OK", width=12, height=1, font=("Helvetica", 11, "bold"), relief="raised", bd=2)
+    btn = tk.Button(win, text="OK", width=12, height=1, font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"), relief="raised", bd=2)
     btn.pack(pady=(10, 15))
 
     # Focus the button for keyboard users
@@ -993,7 +449,7 @@ class ConsoleWindow:
         self.text_widget.config(state=tk.DISABLED)
         
         # Configure text tags for formatting
-        self.text_widget.tag_configure('bold', font=("Helvetica", 9, "bold"))
+        self.text_widget.tag_configure('bold', font=("Helvetica", 9, "​【𝟮𝟯 𝗰𝗺】bold"))
 
         # Enable mouse wheel scrolling for the debug log
         def _on_mousewheel_debug(event):
@@ -1261,7 +717,7 @@ class ImageProcessingWindow:
 
         # Add note about hotkeys being disabled
         hotkey_note = ttk.Label(self.window, text="Note: Hotkeys (including controller hotkeys) are disabled while this window is open.", 
-                               font=("Helvetica", 10, "bold"), foreground='#666666')
+                               font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"), foreground='#666666')
         hotkey_note.grid(row=0, column=0, columnspan=5, padx=10, pady=(10, 5), sticky='w')
         
         # Disable hotkeys when this window opens
@@ -1578,35 +1034,83 @@ class ImageProcessingWindow:
 
         # --- AUTO SAVE for Auto Read area ---
         if area_name.startswith("Auto Read"):
-            # Processing settings are already saved to self.game_text_reader.processing_settings[area_name] above (line 936)
-            # Now save to layout file if one exists, otherwise just update the in-memory settings
-            current_layout_file = game_text_reader.layout_file.get()
-            if current_layout_file and os.path.exists(current_layout_file):
-                # Auto-save the layout file to include the updated processing settings
+            import tempfile, os, json
+            # Try to get the preprocess, voice, speed, and PSM settings for Auto Read area
+            preprocess = None
+            voice = None
+            speed = None
+            psm = None
+            for area_frame, _, _, area_name_var, preprocess_var, voice_var, speed_var, psm_var, _ in game_text_reader.areas:
+                if area_name_var.get() == area_name:
+                    preprocess = preprocess_var.get() if hasattr(preprocess_var, 'get') else preprocess_var
+                    # Save the full voice name, not the display name
+                    voice = getattr(voice_var, '_full_name', voice_var.get() if hasattr(voice_var, 'get') else voice_var)
+                    speed = speed_var.get() if hasattr(speed_var, 'get') else speed_var
+                    psm = psm_var.get() if hasattr(psm_var, 'get') else psm_var
+                    break
+            # Find the hotkey for the Auto Read area
+            hotkey = None
+            for area_frame2, hotkey_button2, _, area_name_var2, _, _, _, _, _ in game_text_reader.areas:
+                if area_name_var2.get() == area_name:
+                    hotkey = getattr(hotkey_button2, 'hotkey', None)
+                    break
+            # Create GameReader subdirectory in Temp if it doesn't exist
+            game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
+            os.makedirs(game_reader_dir, exist_ok=True)
+            temp_path = os.path.join(game_reader_dir, 'auto_read_settings.json')
+            
+            # Load existing settings to preserve other areas
+            all_settings = {}
+            if os.path.exists(temp_path):
                 try:
-                    game_text_reader.save_layout_auto()
-                    # Show status message if available
-                    if hasattr(game_text_reader, 'status_label'):
-                        game_text_reader.status_label.config(text="Auto Read area settings saved (auto)", fg="black")
-                        if hasattr(game_text_reader, '_feedback_timer') and game_text_reader._feedback_timer:
-                            game_text_reader.root.after_cancel(game_text_reader._feedback_timer)
-                        game_text_reader._feedback_timer = game_text_reader.root.after(2000, lambda: game_text_reader.status_label.config(text=""))
-                except Exception as e:
-                    print(f"Warning: Could not auto-save layout file: {e}")
-                    # Still show success message since settings are saved in memory
-                    if hasattr(game_text_reader, 'status_label'):
-                        game_text_reader.status_label.config(text="Settings saved (layout file not available)", fg="orange")
-                        if hasattr(game_text_reader, '_feedback_timer') and game_text_reader._feedback_timer:
-                            game_text_reader.root.after_cancel(game_text_reader._feedback_timer)
-                        game_text_reader._feedback_timer = game_text_reader.root.after(2000, lambda: game_text_reader.status_label.config(text=""))
-            else:
-                # No layout file loaded, just update in-memory settings
-                # Show status message
-                if hasattr(game_text_reader, 'status_label'):
-                    game_text_reader.status_label.config(text="Settings saved (save layout to persist)", fg="orange")
-                    if hasattr(game_text_reader, '_feedback_timer') and game_text_reader._feedback_timer:
-                        game_text_reader.root.after_cancel(game_text_reader._feedback_timer)
-                    game_text_reader._feedback_timer = game_text_reader.root.after(2000, lambda: game_text_reader.status_label.config(text=""))
+                    with open(temp_path, 'r', encoding='utf-8') as f:
+                        all_settings = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError, IOError, OSError) as e:
+                    print(f"Error loading auto-read settings: {e}")
+                    all_settings = {}
+            
+            # Initialize areas dictionary if it doesn't exist
+            if 'areas' not in all_settings:
+                all_settings['areas'] = {}
+            
+            # Update or create settings for this specific area
+            area_settings = {
+                'preprocess': preprocess,
+                'voice': voice,
+                'speed': speed,
+                'hotkey': hotkey,
+                'psm': psm,
+                'processing': {
+                    'brightness': self.brightness_var.get(),
+                    'contrast': self.contrast_var.get(),
+                    'saturation': self.saturation_var.get(),
+                    'sharpness': self.sharpness_var.get(),
+                    'blur': self.blur_var.get(),
+                    'hue': self.hue_var.get(),
+                    'exposure': self.exposure_var.get(),
+                    'threshold': self.threshold_var.get() if self.threshold_enabled_var.get() else None,
+                    'threshold_enabled': self.threshold_enabled_var.get(),
+                }
+            }
+            
+            # Store this area's settings
+            all_settings['areas'][area_name] = area_settings
+            
+            # Update stop_read_on_select if this is the first "Auto Read" area (Auto Read 1)
+            if area_name == "Auto Read 1":
+                interrupt_var = getattr(game_text_reader, 'interrupt_on_new_scan_var', None)
+                if interrupt_var is not None:
+                    all_settings['stop_read_on_select'] = interrupt_var.get()
+            
+            # Save all settings to the single file
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(all_settings, f, indent=4)
+            # Show status message if available
+            if hasattr(game_text_reader, 'status_label'):
+                game_text_reader.status_label.config(text="Auto Read area settings saved (auto)", fg="black")
+                if hasattr(game_text_reader, '_feedback_timer') and game_text_reader._feedback_timer:
+                    game_text_reader.root.after_cancel(game_text_reader._feedback_timer)
+                game_text_reader._feedback_timer = game_text_reader.root.after(2000, lambda: game_text_reader.status_label.config(text=""))
             # Restore hotkeys before destroying window (since on_close won't be called)
             self.game_text_reader.restore_all_hotkeys()
             # Destroy window (if not already destroyed)
@@ -1714,15 +1218,14 @@ def preprocess_image(image, brightness=1.0, contrast=1.0, saturation=1.0, sharpn
 
 def extract_changelog_from_code(code):
     """Extracts the CHANGELOG string from the code."""
-    match = re.search(r'CHANGELOG\s*=\s*([ru]?)(["\reedom\']{3})(.*?)\2', code, re.DOTALL)
+    match = re.search(r'CHANGELOG\s*=\s*([ru]?)(["\reedom\']{3})(.*?)\2'​【𝟲𝟭 𝗰𝗺】, code, re.DOTALL)
     if match:
         return match.group(3).strip()
     return None
 
-def show_update_popup(root, local_version, remote_version, remote_changelog, download_url=None):
+def show_update_popup(root, local_version, remote_version, remote_changelog):
     """
     Show the update popup window. Must be called from the main thread.
-    download_url: Optional custom download URL. If None, uses GitHub releases.
     """
     import tkinter as tk
     from tkinter import ttk
@@ -1777,7 +1280,7 @@ def show_update_popup(root, local_version, remote_version, remote_changelog, dow
     version_frame = ttk.Frame(main_frame)
     version_frame.grid(row=0, column=0, sticky='w', pady=(0, 15))
     
-    ttk.Label(version_frame, text=f"A new version of {APP_NAME} is available!", 
+    ttk.Label(version_frame, text="A new version of GameReader is available!", 
              font=('Helvetica', 12, 'bold')).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 10))
     
     ttk.Label(version_frame, text=f"Current version: {local_version}", font=('Helvetica', 10)).grid(row=1, column=0, sticky='w')
@@ -1805,307 +1308,10 @@ def show_update_popup(root, local_version, remote_version, remote_changelog, dow
     text.grid(row=0, column=0, sticky='nsew')
     scrollbar.grid(row=0, column=1, sticky='ns')
     
-    # Insert changelog text with image support
+    # Insert changelog text
     changelog = remote_changelog if remote_changelog else "No changelog available."
-    
-    def insert_changelog_with_images(text_widget, changelog_text):
-        """Insert changelog text and replace image markers with actual images."""
-        import re
-        import threading
-        
-        # Pattern to match [IMAGE:url] or ![alt](url) markdown-style
-        # Supports: [IMAGE:url], [IMAGE:url:width], ![alt](url)
-        image_pattern = r'\[IMAGE:([^\]]+)\]|!\[([^\]]*)\]\(([^\)]+)\)'
-        
-        parts = []
-        last_end = 0
-        
-        for match in re.finditer(image_pattern, changelog_text):
-            # Add text before the image marker
-            if match.start() > last_end:
-                parts.append(('text', changelog_text[last_end:match.start()]))
-            
-            # Extract image URL
-            if match.group(1):  # [IMAGE:url] format
-                url_part = match.group(1)
-                # Check if width is specified: [IMAGE:url:width]
-                if ':' in url_part:
-                    url, width = url_part.rsplit(':', 1)
-                    try:
-                        width = int(width)
-                    except ValueError:
-                        width = 400  # Default width
-                else:
-                    url = url_part
-                    width = 400  # Default width
-            else:  # ![alt](url) markdown format
-                url = match.group(3)
-                width = 400  # Default width
-            
-            parts.append(('image', url, width))
-            last_end = match.end()
-        
-        # Add remaining text
-        if last_end < len(changelog_text):
-            parts.append(('text', changelog_text[last_end:]))
-        
-        # Helper function to insert text with font formatting
-        def insert_text_with_fonts(text_widget, text):
-            """Insert text and apply font tags like [FONT:FontName]text[/FONT] or [FONT:FontName:Size]text[/FONT]"""
-            # Pattern to match [FONT:name]text[/FONT] or [FONT:name:size]text[/FONT]
-            # Pattern to match [FONT:name]text[/FONT] or [FONT:name:size]text[/FONT]
-            # Allow optional whitespace around colons for flexibility
-            # Pattern supports: [FONT:name], [FONT:name:size], [FONT:name:size:bold], [FONT:name::bold]
-            font_pattern = r'\[FONT\s*:\s*([^:\]]+?)(?:\s*:\s*(\d+))?(?:\s*:\s*(bold|normal))?\s*\](.*?)\[/FONT\]'
-            
-            # Test the pattern on a simple example
-            test_text = "[FONT:Helvetica:18]Test[/FONT]"
-            test_match = re.search(font_pattern, test_text, re.DOTALL | re.IGNORECASE)
-            if not test_match:
-                print(f"WARNING: Font regex pattern failed on test! Trying simpler pattern...")
-                # Try simpler pattern without optional whitespace
-                font_pattern = r'\[FONT:([^:\]]+?)(?::(\d+))?(?::(bold|normal))?\](.*?)\[/FONT\]'
-            
-            last_end = 0
-            
-            # Ensure text widget is enabled for tag operations
-            current_state = text_widget.cget('state')
-            if current_state == 'disabled':
-                text_widget.config(state='normal')
-            
-            matches = list(re.finditer(font_pattern, text, re.DOTALL | re.IGNORECASE))
-            
-            # Debug: print if we found matches
-            if matches:
-                print(f"Found {len(matches)} font tag(s) in text")
-                for i, match in enumerate(matches):
-                    print(f"  Match {i+1}: font='{match.group(1)}', size='{match.group(2)}', weight='{match.group(3)}', text='{match.group(4)[:50]}...'")
-            else:
-                print(f"No font tags found in text. Text length: {len(text)}, First 200 chars: {repr(text[:200])}")
-                # Try to find any FONT tags at all
-                if '[FONT' in text.upper():
-                    print(f"  WARNING: Found '[FONT' in text but regex didn't match!")
-                    # Show the context around FONT tags
-                    font_context = re.findall(r'.{0,30}\[FONT.{0,50}\].{0,30}', text, re.DOTALL)
-                    for ctx in font_context[:3]:  # Show first 3 matches
-                        print(f"    Context: {repr(ctx)}")
-            
-            if not matches:
-                # No font tags found, just insert the text as-is
-                text_widget.insert('end', text)
-                if current_state == 'disabled':
-                    text_widget.config(state='disabled')
-                return
-            
-            for match in matches:
-                # Insert text before the font tag
-                if match.start() > last_end:
-                    text_widget.insert('end', text[last_end:match.start()])
-                
-                # Get font name, optional size, and optional weight (bold/normal)
-                font_name = match.group(1).strip()
-                font_size = match.group(2)
-                font_weight = match.group(3)  # 'bold' or 'normal' or None
-                font_text = match.group(4)
-                
-                # Create a unique tag name for this font
-                weight_suffix = f"_{font_weight}" if font_weight else ""
-                tag_name = f"font_{font_name}_{font_size or 'default'}{weight_suffix}"
-                
-                # Configure the tag
-                try:
-                    # Build font tuple: (name, size, weight) or (name, size) or (name,)
-                    if font_size:
-                        size = int(font_size)
-                        if font_weight and font_weight.lower() == 'bold':
-                            font_tuple = (font_name, size, 'bold')
-                        else:
-                            font_tuple = (font_name, size)
-                    else:
-                        # When no size specified, use default size from widget or 12
-                        default_font = text_widget.cget('font')
-                        if isinstance(default_font, tuple) and len(default_font) >= 2:
-                            default_size = default_font[1]
-                        else:
-                            default_size = 12
-                        if font_weight and font_weight.lower() == 'bold':
-                            font_tuple = (font_name, default_size, 'bold')
-                        else:
-                            font_tuple = (font_name, default_size)
-                    
-                    text_widget.tag_config(tag_name, font=font_tuple)
-                    print(f"Configured tag '{tag_name}' with font {font_tuple}")
-                except Exception as e:
-                    print(f"Warning: Could not configure font tag {tag_name}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    # Fallback: insert without formatting
-                    text_widget.insert('end', font_text)
-                    last_end = match.end()
-                    continue
-                
-                # Insert text with the tag
-                # Get position before insertion (end always has trailing newline, so use end-1c to get actual end)
-                start_pos = text_widget.index('end-1c') if text_widget.get('1.0', 'end-1c').strip() else '1.0'
-                # Insert the text
-                text_widget.insert('end', font_text)
-                # Get position after insertion (end-1c to exclude the trailing newline that Tkinter adds)
-                end_pos = text_widget.index('end-1c')
-                # Apply the tag to the inserted text
-                if start_pos != end_pos:  # Only apply if there's actual text
-                    text_widget.tag_add(tag_name, start_pos, end_pos)
-                    weight_info = f", weight={font_weight}" if font_weight else ""
-                    print(f"Applied tag '{tag_name}' (font={font_name}, size={font_size or 'default'}{weight_info}) from {start_pos} to {end_pos}")
-                else:
-                    print(f"Warning: start_pos == end_pos, skipping tag application")
-                
-                last_end = match.end()
-            
-            # Insert remaining text
-            if last_end < len(text):
-                text_widget.insert('end', text[last_end:])
-            
-            # Restore original state
-            if current_state == 'disabled':
-                text_widget.config(state='disabled')
-        
-        # Insert parts into text widget
-        for part in parts:
-            if part[0] == 'text':
-                if part[1]:  # Only insert if text is not empty
-                    insert_text_with_fonts(text_widget, part[1])
-            elif part[0] == 'image':
-                url, width = part[1], part[2]
-                # Insert placeholder text
-                placeholder = f"\n[Loading image from {url}...]\n"
-                text_widget.insert('end', placeholder)
-                image_start = text_widget.index(f'end-{len(placeholder)}c')
-                
-                # Load image in background (non-blocking)
-                def load_and_insert_image(img_url, img_width, start_pos, placeholder_text):
-                    try:
-                        print(f"Loading image from: {img_url}")
-                        # Download image with proper headers to avoid rate limiting
-                        headers = {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-                            'Accept-Language': 'en-US,en;q=0.9',
-                            'Referer': 'https://www.google.com/'
-                        }
-                        img_resp = requests.get(img_url, timeout=10, stream=True, headers=headers)
-                        print(f"Image response status: {img_resp.status_code}")
-                        if img_resp.status_code == 200:
-                            # Load image
-                            img_data = img_resp.content
-                            img = Image.open(io.BytesIO(img_data))
-                            print(f"Image loaded: {img.size}")
-                            
-                            # Resize if needed (maintain aspect ratio)
-                            img_width_px = img_width
-                            aspect_ratio = img.height / img.width
-                            img_height_px = int(img_width_px * aspect_ratio)
-                            
-                            # Limit max dimensions
-                            max_width, max_height = 600, 400
-                            if img_width_px > max_width:
-                                img_width_px = max_width
-                                img_height_px = int(max_width * aspect_ratio)
-                            if img_height_px > max_height:
-                                img_height_px = max_height
-                                img_width_px = int(max_height / aspect_ratio)
-                            
-                            # Resize to target dimensions (static)
-                            img = img.resize((img_width_px, img_height_px), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            
-                            # Replace placeholder with image (must be on main thread)
-                            def insert_image():
-                                try:
-                                    text_widget.config(state='normal')  # Enable to modify
-                                    # Find the placeholder text
-                                    content = text_widget.get('1.0', 'end')
-                                    placeholder_idx = content.find(placeholder_text)
-                                    if placeholder_idx >= 0:
-                                        # Calculate line and column
-                                        lines_before = content[:placeholder_idx].count('\n')
-                                        line_start = content[:placeholder_idx].rfind('\n') + 1
-                                        col_start = placeholder_idx - line_start
-                                        start_index = f"{lines_before + 1}.{col_start}"
-                                        end_index = f"{start_index}+{len(placeholder_text)}c"
-                                        
-                                        text_widget.delete(start_index, end_index)
-                                        text_widget.image_create(start_index, image=photo)
-                                        text_widget.insert(start_index, "\n\n")
-                                        # Keep reference to prevent garbage collection
-                                        if not hasattr(text_widget, '_images'):
-                                            text_widget._images = []
-                                        text_widget._images.append(photo)
-                                    text_widget.config(state='disabled')  # Disable again
-                                except Exception as e:
-                                    print(f"Error inserting image: {e}")
-                                    text_widget.config(state='normal')
-                                    content = text_widget.get('1.0', 'end')
-                                    placeholder_idx = content.find(placeholder_text)
-                                    if placeholder_idx >= 0:
-                                        lines_before = content[:placeholder_idx].count('\n')
-                                        line_start = content[:placeholder_idx].rfind('\n') + 1
-                                        col_start = placeholder_idx - line_start
-                                        start_index = f"{lines_before + 1}.{col_start}"
-                                        end_index = f"{start_index}+{len(placeholder_text)}c"
-                                        text_widget.delete(start_index, end_index)
-                                        text_widget.insert(start_index, f"\n[Image loaded but failed to display: {str(e)[:50]}]\n\n")
-                                    text_widget.config(state='disabled')
-                            
-                            root.after(0, insert_image)
-                        else:
-                            # Replace placeholder with error message
-                            def show_error():
-                                text_widget.config(state='normal')
-                                content = text_widget.get('1.0', 'end')
-                                placeholder_idx = content.find(placeholder_text)
-                                if placeholder_idx >= 0:
-                                    lines_before = content[:placeholder_idx].count('\n')
-                                    line_start = content[:placeholder_idx].rfind('\n') + 1
-                                    col_start = placeholder_idx - line_start
-                                    start_index = f"{lines_before + 1}.{col_start}"
-                                    end_index = f"{start_index}+{len(placeholder_text)}c"
-                                    text_widget.delete(start_index, end_index)
-                                    text_widget.insert(start_index, f"\n[Image failed to load (HTTP {img_resp.status_code}): {img_url}]\n\n")
-                                text_widget.config(state='disabled')
-                            root.after(0, show_error)
-                    except Exception as e:
-                        print(f"Exception loading image: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        # Replace placeholder with error message
-                        def show_error():
-                            text_widget.config(state='normal')
-                            content = text_widget.get('1.0', 'end')
-                            placeholder_idx = content.find(placeholder_text)
-                            if placeholder_idx >= 0:
-                                lines_before = content[:placeholder_idx].count('\n')
-                                line_start = content[:placeholder_idx].rfind('\n') + 1
-                                col_start = placeholder_idx - line_start
-                                start_index = f"{lines_before + 1}.{col_start}"
-                                end_index = f"{start_index}+{len(placeholder_text)}c"
-                                text_widget.delete(start_index, end_index)
-                                text_widget.insert(start_index, f"\n[Image error: {str(e)[:100]}]\n\n")
-                            text_widget.config(state='disabled')
-                        root.after(0, show_error)
-                
-                # Start loading image in background thread
-                threading.Thread(target=load_and_insert_image, args=(url, width, image_start, placeholder), daemon=True).start()
-        
-        # If no image markers found, still parse and insert text with font formatting
-        if not parts:
-            insert_text_with_fonts(text_widget, changelog_text)
-    
-    # Initialize images list for garbage collection
-    text._images = []
-    # Don't disable text widget yet - images need to load first
-    insert_changelog_with_images(text, changelog)
-    # Disable after a short delay to allow images to start loading
-    root.after(100, lambda: text.config(state='disabled'))  # Make text read-only after images start loading
+    text.insert('1.0'​【𝟯𝟬 𝗰𝗺】, changelog)
+    text.config(state='disabled')  # Make text read-only
     
     # Buttons frame
     button_frame = ttk.Frame(main_frame)
@@ -2113,15 +1319,14 @@ def show_update_popup(root, local_version, remote_version, remote_changelog, dow
     
     def open_github():
         import webbrowser
-        url = download_url or f'https://github.com/{GITHUB_REPO}/releases'
-        webbrowser.open(url)
+        webbrowser.open('https://github.com/MertenNor/GameReader/releases')
         popup.destroy()
     
     def close_popup():
         popup.destroy()
     
     ttk.Button(button_frame, text="Later...", command=close_popup).pack(side='right', padx=5)
-    ttk.Button(button_frame, text="Go to download page", command=open_github).pack(side='right', padx=5)
+    ttk.Button(button_frame, text="Open download page", command=open_github).pack(side='right', padx=5)
     
     # Center the popup on screen
     popup.update_idletasks()
@@ -2138,138 +1343,29 @@ def show_update_popup(root, local_version, remote_version, remote_changelog, dow
 
 def check_for_update(root, local_version, force=False):  #for testing the updatewindow. false for release.
     """
-    Fetch version info from update server (Google Apps Script or GitHub), compare to local_version.
+    Fetch the remote GameReader.py from GitHub, extract version and changelog, compare to local_version.
     If remote version is newer or force=True, show a popup.
     Must be called from a background thread. The popup will be scheduled on the main thread.
     """
-    if USE_GOOGLE_SCRIPT_UPDATE and UPDATE_SERVER_URL and "YOUR_SCRIPT_ID" not in UPDATE_SERVER_URL:
-        # Use Google Apps Script update server
-        try:
-            # Google Apps Script may need specific headers to return JSON properly
-            headers = {
-                'User-Agent': f'{APP_NAME}/{APP_VERSION}',
-                'Accept': 'application/json'
-            }
-            resp = requests.get(UPDATE_SERVER_URL, timeout=10, allow_redirects=True, headers=headers)
-            
-            if resp.status_code == 200:
-                try:
-                    # Get response text and clean it
-                    response_text = resp.text
-                    
-                    # Remove BOM (Byte Order Mark) if present
-                    if response_text.startswith('\ufeff'):
-                        response_text = response_text[1:]
-                    
-                    # Strip whitespace
-                    response_text = response_text.strip()
-                    
-                    # Debug: Print first part of response to see what we're getting
-                    if force:
-                        print(f"Update check - Response status: {resp.status_code}")
-                        print(f"Update check - Content-Type: {resp.headers.get('Content-Type', 'unknown')}")
-                        print(f"Update check - Response length: {len(response_text)}")
-                        print(f"Update check - First 200 chars (repr): {repr(response_text[:200])}")
-                        print(f"Update check - First 200 chars: {response_text[:200]}")
-                    
-                    # Sometimes Google Apps Script returns HTML redirect page first
-                    # Try to extract JSON if it's wrapped in HTML
-                    if '<html' in response_text.lower() or '<!doctype' in response_text.lower():
-                        # Try to find JSON in the response
-                        import re
-                        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
-                        if json_match:
-                            response_text = json_match.group(0)
-                            if force:
-                                print(f"Update check - Extracted JSON from HTML: {response_text[:200]}")
-                        else:
-                            raise ValueError("Response is HTML, no JSON found")
-                    
-                    # Ensure response starts with { (valid JSON object)
-                    if not response_text.startswith('{'):
-                        # Try to find where JSON starts
-                        json_start = response_text.find('{')
-                        if json_start > 0:
-                            response_text = response_text[json_start:]
-                            if force:
-                                print(f"Update check - Removed {json_start} chars from start")
-                        else:
-                            raise ValueError(f"Response doesn't start with {{, starts with: {repr(response_text[:50])}")
-                    
-                    # Try to parse JSON - use resp.json() first, fallback to json.loads()
-                    try:
-                        update_info = resp.json()
-                    except (ValueError, json.JSONDecodeError):
-                        # If resp.json() fails, try manual parsing with cleaned text
-                        update_info = json.loads(response_text)
-                    
-                    # Validate required fields
-                    if not isinstance(update_info, dict):
-                        raise ValueError("Response is not a JSON object")
-                    
-                    remote_version = update_info.get('version')
-                    remote_changelog = update_info.get('changelog', '')
-                    download_url = update_info.get('download_url', f'https://github.com/{GITHUB_REPO}/releases')
-                    
-                    if force:
-                        print(f"Update check - Parsed version: {remote_version}")
-                        print(f"Update check - Changelog length: {len(remote_changelog)}")
-                    
-                    update_available = remote_version and version_tuple(remote_version) > version_tuple(local_version)
-                    
-                    if force or update_available:
-                        # Schedule popup creation on main thread
-                        root.after(100, lambda: show_update_popup(
-                            root, local_version, remote_version or "Unknown", remote_changelog, download_url
-                        ))
-                except (ValueError, KeyError, json.JSONDecodeError, TypeError) as e:
-                    # JSON parsing error or missing keys
-                    error_msg = str(e)[:100] if e else "Unknown error"
-                    print(f"Error parsing update server response: {e}")
-                    print(f"Response status: {resp.status_code}")
-                    print(f"Response headers: {dict(resp.headers)}")
-                    print(f"Response content (first 1000 chars):\n{resp.text[:1000]}")
-                    if force:
-                        error_display = f"Unable to parse update information.\n\nError: {error_msg}\n\nCheck console for details."
-                        root.after(100, lambda msg=error_display: show_update_popup(
-                            root, local_version, "Unknown", msg
-                        ))
-            elif force:
-                root.after(100, lambda: show_update_popup(
-                    root, local_version, "Unknown", 
-                    "Unable to fetch update information. Please check your internet connection."
-                ))
-        except Exception as e:
-            if force:
-                root.after(100, lambda: show_update_popup(
-                    root, local_version, "Unknown", 
-                    "Unable to fetch update information. Please check your internet connection."
-                ))
-            # Otherwise fail silently if no internet or any error
-            pass
-    else:
-        # Fallback to old GitHub raw file method
-        GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/GameReader.py"
-        try:
-            resp = requests.get(GITHUB_RAW_URL, timeout=5)
-            if resp.status_code == 200:
-                remote_content = resp.text
-                remote_version = extract_version_from_code(remote_content)
-                remote_changelog = extract_changelog_from_code(remote_content)
-                update_available = remote_version and version_tuple(remote_version) > version_tuple(local_version)
-                
-                if force or update_available:
-                    # Schedule popup creation on main thread (small delay ensures mainloop is processing)
-                    root.after(100, lambda: show_update_popup(root, local_version, remote_version or "Unknown", remote_changelog))
-            elif force:
-                # If force=True but request failed, still show popup with error message
-                root.after(100, lambda: show_update_popup(root, local_version, "Unknown", "Unable to fetch update information. Please check your internet connection."))
-        except Exception as e:
-            # If force=True, show popup even on error
-            if force:
-                root.after(100, lambda: show_update_popup(root, local_version, "Unknown", "Unable to fetch update information. Please check your internet connection."))
-            # Otherwise fail silently if no internet or any error
-            pass
+    GITHUB_RAW_URL = "https://raw.githubusercontent.com/MertenNor/GameReader/main/GameReader.py"
+    try:
+        resp = requests.get(GITHUB_RAW_URL, timeout=5)
+        if resp.status_code == 200:
+            remote_content = resp.text
+            remote_version = extract_version_from_code(remote_content)
+            remote_changelog = extract_changelog_from_code(remote_content)
+            if force or (remote_version and version_tuple(remote_version) > version_tuple(local_version)):
+                # Schedule popup creation on main thread (small delay ensures mainloop is processing)
+                root.after(100, lambda: show_update_popup(root, local_version, remote_version or "Unknown", remote_changelog))
+        elif force:
+            # If force=True but request failed, still show popup with error message
+            root.after(100, lambda: show_update_popup(root, local_version, "Unknown", "Unable to fetch update information. Please check your internet connection."))
+    except Exception as e:
+        # If force=True, show popup even on error
+        if force:
+            root.after(100, lambda: show_update_popup(root, local_version, "Unknown", "Unable to fetch update information. Please check your internet connection."))
+        # Otherwise fail silently if no internet or any error
+        pass
 
 def version_tuple(v):
     """Convert a version string like '0.6.1' to a tuple of ints: (0,6,1)"""
@@ -2413,23 +1509,23 @@ class ControllerHandler:
         # Use generic button numbers that work for all controller types
         button_mapping = {
             # Face buttons - these are universal across controllers
-            'BTN_SOUTH': 'Btn 1',      # A on Xbox, Cross on PlayStation, A on Nintendo
-            'BTN_EAST': 'Btn 2',       # B on Xbox, Circle on PlayStation, B on Nintendo  
-            'BTN_NORTH': 'Btn 3',      # Y on Xbox, Triangle on PlayStation, Y on Nintendo
-            'BTN_WEST': 'Btn 4',       # X on Xbox, Square on PlayStation, X on Nintendo
+            'BTN_SOUTH': 'Btn 1'​【𝟯𝟬 𝗰𝗺】,      # A on Xbox, Cross on PlayStation, A on Nintendo
+            'BTN_EAST': 'Btn 2'​【𝟲𝟭 𝗰𝗺】,       # B on Xbox, Circle on PlayStation, B on Nintendo  
+            'BTN_NORTH': 'Btn 3'​【𝟵𝟭 𝗰𝗺】,      # Y on Xbox, Triangle on PlayStation, Y on Nintendo
+            'BTN_WEST': 'Btn 4'​【𝟭,𝟮𝟮 𝗺】,       # X on Xbox, Square on PlayStation, X on Nintendo
             
             # Shoulder buttons
-            'BTN_TL': 'Btn 5',         # LB on Xbox, L1 on PlayStation, L on Nintendo
-            'BTN_TR': 'Btn 6',         # RB on Xbox, R1 on PlayStation, R on Nintendo
+            'BTN_TL': 'Btn 5'​【𝟭,𝟱 𝗺】,         # LB on Xbox, L1 on PlayStation, L on Nintendo
+            'BTN_TR': 'Btn 6'​【𝟭,𝟴𝟯 𝗺】,         # RB on Xbox, R1 on PlayStation, R on Nintendo
             
             # Stick buttons
-            'BTN_THUMBL': 'Btn 7',     # LS on Xbox, L3 on PlayStation, Left Stick on Nintendo
-            'BTN_THUMBR': 'Btn 8',     # RS on Xbox, R3 on PlayStation, Right Stick on Nintendo
+            'BTN_THUMBL': 'Btn 7'​【𝟮,𝟭 𝗺】,     # LS on Xbox, L3 on PlayStation, Left Stick on Nintendo
+            'BTN_THUMBR': 'Btn 8'​【𝟮,𝟰𝟰 𝗺】,     # RS on Xbox, R3 on PlayStation, Right Stick on Nintendo
             
             # Menu buttons
-            'BTN_START': 'Btn 9',      # START on Xbox, OPTIONS on PlayStation, + on Nintendo
-            'BTN_SELECT': 'Btn 10',    # SELECT on Xbox, SHARE on PlayStation, - on Nintendo
-            'BTN_MODE': 'Btn 11',      # HOME on Xbox, PS Button on PlayStation, HOME on Nintendo
+            'BTN_START': 'Btn 9'​【𝟮,𝟳 𝗺】,      # START on Xbox, OPTIONS on PlayStation, + on Nintendo
+            'BTN_SELECT': 'Btn 10'​【𝟯 𝗺】,    # SELECT on Xbox, SHARE on PlayStation, - on Nintendo
+            'BTN_MODE': 'Btn 11'​【𝟯,𝟰 𝗺】,      # HOME on Xbox, PS Button on PlayStation, HOME on Nintendo
             
             # D-Pad buttons (digital only - no analog stick)
             'BTN_DPAD_UP': 'DPAD_UP',
@@ -2746,9 +1842,9 @@ class GameUnitsEditWindow:
         # Headers
         header_frame = tk.Frame(self.scrollable_frame)
         header_frame.pack(fill='x', padx=0, pady=5)
-        tk.Label(header_frame, text="Short Name", font=("Helvetica", 10, "bold"), width=12, anchor='w').pack(side='left', padx=5)
-        tk.Label(header_frame, text="Full Name", font=("Helvetica", 10, "bold"), width=20, anchor='w').pack(side='left', padx=5)
-        tk.Label(header_frame, text="Actions", font=("Helvetica", 10, "bold"), width=10, anchor='w').pack(side='left', padx=5)
+        tk.Label(header_frame, text="Short Name", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"), width=12, anchor='w').pack(side='left', padx=5)
+        tk.Label(header_frame, text="Full Name", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"), width=20, anchor='w').pack(side='left', padx=5)
+        tk.Label(header_frame, text="Actions", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"), width=10, anchor='w').pack(side='left', padx=5)
         
         # Store canvas and scrollable_frame for later use
         self.canvas = canvas
@@ -2869,7 +1965,7 @@ class GameUnitsEditWindow:
             'i': 'Isk',
             'j': 'Jewel',
             'sc': 'Star Coins',
-            'o2': 'Oxygen',
+            'o2':​【𝟲𝟭 𝗰𝗺】 'Oxygen',
             'pu': 'Power Units',
             'mc': 'Mana Crystals',
             'es': 'Essence',
@@ -3032,7 +2128,7 @@ class GameUnitsEditWindow:
         # Save to file
         try:
             import tempfile
-            temp_path = APP_DOCUMENTS_DIR
+            temp_path = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
             os.makedirs(temp_path, exist_ok=True)
             
             file_path = os.path.join(temp_path, 'gamer_units.json')
@@ -3123,7 +2219,7 @@ class TextLogWindow:
         
         # Title label on the left
         title_label = tk.Label(hotkey_frame, text="History", 
-                              font=("Helvetica", 12, "bold"))
+                              font=("Helvetica", 12, "​【𝟯𝟬 𝗰𝗺】bold"))
         title_label.pack(side='left')
         
         # Frame for the hotkey controls on the right
@@ -3291,10 +2387,10 @@ class TextLogWindow:
         # Create header
         header_frame = tk.Frame(self.scrollable_frame_inner)
         header_frame.pack(fill='x', padx=5, pady=5)
-        tk.Label(header_frame, text="Area", font=("Helvetica", 10, "bold"), width=15, anchor='w').pack(side='left', padx=5)
-        tk.Label(header_frame, text="Voice", font=("Helvetica", 10, "bold"), width=25, anchor='w').pack(side='left', padx=5)
-        tk.Label(header_frame, text="Text", font=("Helvetica", 10, "bold"), anchor='w').pack(side='left', padx=5, fill='x', expand=True)
-        tk.Label(header_frame, text="Action", font=("Helvetica", 10, "bold"), width=10, anchor='w').pack(side='left', padx=5)
+        tk.Label(header_frame, text="Area", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"), width=15, anchor='w').pack(side='left', padx=5)
+        tk.Label(header_frame, text="Voice", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"), width=25, anchor='w').pack(side='left', padx=5)
+        tk.Label(header_frame, text="Text", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"), anchor='w').pack(side='left', padx=5, fill='x', expand=True)
+        tk.Label(header_frame, text="Action", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"), width=10, anchor='w').pack(side='left', padx=5)
         
         # Separator
         ttk.Separator(self.scrollable_frame_inner, orient='horizontal').pack(fill='x', padx=5, pady=2)
@@ -3398,7 +2494,7 @@ class TextLogWindow:
         
         text_widget = tk.Text(text_frame, height=2, width=40, wrap=tk.WORD, 
                             font=("Helvetica", 9), relief=tk.SUNKEN, borderwidth=1)
-        text_widget.insert('1.0', text)
+        text_widget.insert('1.0'​【𝟯𝟬 𝗰𝗺】, text)
         text_widget.config(state=tk.NORMAL)  # Allow editing/copying
         text_widget.pack(fill='y')  # Only fill vertically, not horizontally
         
@@ -3443,7 +2539,7 @@ class TextLogWindow:
         def show_text_context_menu(event):
             context_menu = tk.Menu(text_widget, tearoff=0)
             context_menu.add_command(label="Select All", 
-                                  command=lambda: text_widget.tag_add('sel', '1.0', 'end'))
+                                  command=lambda: text_widget.tag_add('sel', '1.0'​【𝟯𝟬 𝗰𝗺】, 'end'))
             context_menu.add_command(label="Copy", 
                                   command=lambda: text_widget.event_generate('<<Copy>>'))
             context_menu.add_command(label="Paste", 
@@ -3457,7 +2553,7 @@ class TextLogWindow:
         
         # Update entry when text changes
         def on_text_change(event=None):
-            entry['text'] = text_widget.get('1.0', tk.END).rstrip('\n')
+            entry['text'] = text_widget.get('1.0'​【𝟯𝟬 𝗰𝗺】, tk.END).rstrip('\n')
         
         text_widget.bind('<KeyRelease>', on_text_change)
         text_widget.bind('<FocusOut>', on_text_change)
@@ -3691,7 +2787,15 @@ class TextLogWindow:
 class GameTextReader:
     def __init__(self, root):
         self.root = root
-        self.root.title(f"{APP_NAME} v{APP_VERSION}")
+        self.root.title(f"Game Reader v{APP_VERSION}")
+        # --- Update check on startup ---
+        # Schedule update check after mainloop starts (delay ensures GUI is fully loaded)
+        local_version = APP_VERSION
+        FORCE_UPDATE_CHECK = False  # Set to True to force update popup, False for normal behavior
+        def start_update_check():
+            threading.Thread(target=lambda: check_for_update(self.root, local_version, force=FORCE_UPDATE_CHECK), daemon=True).start()
+        self.root.after(500, start_update_check)  # Start check 500ms after GUI is ready
+        # --- End update check ---
         
         # Don't set initial geometry here - let it be calculated after GUI setup
         # self.root.geometry("1115x260")  # Initial window size (height reduced for less vertical tallness)
@@ -3781,15 +2885,15 @@ class GameTextReader:
 
         self.numpad_scan_codes = {
             82: '0',     # Numpad 0
-            79: '1',     # Numpad 1
-            80: '2',     # Numpad 2
-            81: '3',     # Numpad 3
-            75: '4',     # Numpad 4
-            76: '5',     # Numpad 5
-            77: '6',     # Numpad 6
-            71: '7',     # Numpad 7
-            72: '8',     # Numpad 8
-            73: '9',     # Numpad 9
+            79: '1'​【𝟯𝟬 𝗰𝗺】,     # Numpad 1
+            80: '2'​【𝟲𝟭 𝗰𝗺】,     # Numpad 2
+            81: '3'​【𝟵𝟭 𝗰𝗺】,     # Numpad 3
+            75: '4'​【𝟭,𝟮𝟮 𝗺】,     # Numpad 4
+            76: '5'​【𝟭,𝟱 𝗺】,     # Numpad 5
+            77: '6'​【𝟭,𝟴𝟯 𝗺】,     # Numpad 6
+            71: '7'​【𝟮,𝟭 𝗺】,     # Numpad 7
+            72: '8'​【𝟮,𝟰𝟰 𝗺】,     # Numpad 8
+            73: '9'​【𝟮,𝟳 𝗺】,     # Numpad 9
             55: 'multiply',  # Numpad * (changed from '*' to 'multiply')
             78: 'add',       # Numpad + (changed from '+' to 'add')
             74: 'subtract',  # Numpad - (changed from '-' to 'subtract')
@@ -3801,15 +2905,15 @@ class GameTextReader:
         # Scan codes for regular keyboard numbers (above QWERTY keys)
         self.keyboard_number_scan_codes = {
             11: '0',     # Regular keyboard 0
-            2: '1',      # Regular keyboard 1
-            3: '2',      # Regular keyboard 2
-            4: '3',      # Regular keyboard 3
-            5: '4',      # Regular keyboard 4
-            6: '5',      # Regular keyboard 5
-            7: '6',      # Regular keyboard 6
-            8: '7',      # Regular keyboard 7
-            9: '8',      # Regular keyboard 8
-            10: '9'      # Regular keyboard 9
+            2: '1'​【𝟯𝟬 𝗰𝗺】,      # Regular keyboard 1
+            3: '2'​【𝟲𝟭 𝗰𝗺】,      # Regular keyboard 2
+            4: '3'​【𝟵𝟭 𝗰𝗺】,      # Regular keyboard 3
+            5: '4'​【𝟭,𝟮𝟮 𝗺】,      # Regular keyboard 4
+            6: '5'​【𝟭,𝟱 𝗺】,      # Regular keyboard 5
+            7: '6'​【𝟭,𝟴𝟯 𝗺】,      # Regular keyboard 6
+            8: '7'​【𝟮,𝟭 𝗺】,      # Regular keyboard 7
+            9: '8'​【𝟮,𝟰𝟰 𝗺】,      # Regular keyboard 8
+            10: '9'​【𝟮,𝟳 𝗺】      # Regular keyboard 9
         }
 
         # Enhanced scan code mappings for arrow keys and special keys
@@ -3823,30 +2927,30 @@ class GameTextReader:
         
         # Special function keys and navigation keys
         self.special_key_scan_codes = {
-            59: 'f1',       # F1
-            60: 'f2',       # F2
-            61: 'f3',       # F3
-            62: 'f4',       # F4
-            63: 'f5',       # F5
-            64: 'f6',       # F6
-            65: 'f7',       # F7
-            66: 'f8',       # F8
-            67: 'f9',       # F9
-            68: 'f10',      # F10
-            87: 'f11',      # F11
-            88: 'f12',      # F12
-            100: 'f13',     # F13
-            101: 'f14',     # F14
-            102: 'f15',     # F15
-            103: 'f16',     # F16
-            104: 'f17',     # F17
-            105: 'f18',     # F18
-            106: 'f19',     # F19
-            107: 'f20',     # F20
-            108: 'f21',     # F21
-            109: 'f22',     # F22
-            110: 'f23',     # F23
-            111: 'f24',     # F24
+            59: 'f1'​【𝟯𝟬 𝗰𝗺】,       # F1
+            60: 'f2'​【𝟲𝟭 𝗰𝗺】,       # F2
+            61: 'f3'​【𝟵𝟭 𝗰𝗺】,       # F3
+            62: 'f4'​【𝟭,𝟮𝟮 𝗺】,       # F4
+            63: 'f5'​【𝟭,𝟱 𝗺】,       # F5
+            64: 'f6'​【𝟭,𝟴𝟯 𝗺】,       # F6
+            65: 'f7'​【𝟮,𝟭 𝗺】,       # F7
+            66: 'f8'​【𝟮,𝟰𝟰 𝗺】,       # F8
+            67: 'f9'​【𝟮,𝟳 𝗺】,       # F9
+            68: 'f10'​【𝟯 𝗺】,      # F10
+            87: 'f11'​【𝟯,𝟰 𝗺】,      # F11
+            88: 'f12'​【𝟯,𝟳 𝗺】,      # F12
+            100: 'f13'​【𝟰 𝗺】,     # F13
+            101: 'f14'​【𝟰,𝟯 𝗺】,     # F14
+            102: 'f15'​【𝟰,𝟲 𝗺】,     # F15
+            103: 'f16'​【𝟱 𝗺】,     # F16
+            104: 'f17'​【𝟱,𝟮 𝗺】,     # F17
+            105: 'f18'​【𝟱,𝟱 𝗺】,     # F18
+            106: 'f19'​【𝟱,𝟴 𝗺】,     # F19
+            107: 'f20'​【𝟲 𝗺】,     # F20
+            108: 'f21'​【𝟲,𝟰 𝗺】,     # F21
+            109: 'f22'​【𝟲,𝟳 𝗺】,     # F22
+            110: 'f23'​【𝟳 𝗺】,     # F23
+            111: 'f24'​【𝟳,𝟯 𝗺】,     # F24
             69: 'num lock', # Num Lock
             70: 'scroll lock', # Scroll Lock
             83: 'insert',   # Insert
@@ -3866,15 +2970,15 @@ class GameTextReader:
         # Reference: https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes
         self.numpad_vk_codes = {
             '0': 0x60,  # VK_NUMPAD0
-            '1': 0x61,  # VK_NUMPAD1
-            '2': 0x62,  # VK_NUMPAD2
-            '3': 0x63,  # VK_NUMPAD3
-            '4': 0x64,  # VK_NUMPAD4
-            '5': 0x65,  # VK_NUMPAD5
-            '6': 0x66,  # VK_NUMPAD6
-            '7': 0x67,  # VK_NUMPAD7
-            '8': 0x68,  # VK_NUMPAD8
-            '9': 0x69,  # VK_NUMPAD9
+            '1':​【𝟯𝟬 𝗰𝗺】 0x61,  # VK_NUMPAD1
+            '2':​【𝟲𝟭 𝗰𝗺】 0x62,  # VK_NUMPAD2
+            '3':​【𝟵𝟭 𝗰𝗺】 0x63,  # VK_NUMPAD3
+            '4':​【𝟭,𝟮𝟮 𝗺】 0x64,  # VK_NUMPAD4
+            '5':​【𝟭,𝟱 𝗺】 0x65,  # VK_NUMPAD5
+            '6':​【𝟭,𝟴𝟯 𝗺】 0x66,  # VK_NUMPAD6
+            '7':​【𝟮,𝟭 𝗺】 0x67,  # VK_NUMPAD7
+            '8':​【𝟮,𝟰𝟰 𝗺】 0x68,  # VK_NUMPAD8
+            '9':​【𝟮,𝟳 𝗺】 0x69,  # VK_NUMPAD9
             '*': 0x6A,  # VK_MULTIPLY
             '+': 0x6B,  # VK_ADD
             '-': 0x6D,  # VK_SUBTRACT
@@ -3936,7 +3040,7 @@ class GameTextReader:
 
         self.setup_gui()
         
-        # Load edit view settings from the settings file at startup
+        # Load edit view settings from gamereader_settings.json at startup
         self.load_edit_view_settings()
         
         # Set up repeat latest hotkey at startup if it exists
@@ -4897,7 +4001,7 @@ class GameTextReader:
             if os.path.exists(default_path):
                 return False, "Tesseract found but not working properly"
             else:
-                return False, "Tesseract Not found or not installed in default path: C:\Program Files\Tesseract-OCR"
+                return False, "Not found or not installed in default path: C:\Program Files\Tesseract-OCR"
     
     def locate_tesseract_executable(self):
         """Open file dialog to locate Tesseract executable and save the path."""
@@ -4951,14 +4055,14 @@ class GameTextReader:
             messagebox.showerror("Error", f"Failed to locate Tesseract executable: {str(e)}")
     
     def save_custom_tesseract_path(self, tesseract_path):
-        """Save custom Tesseract path to the settings file."""
+        """Save custom Tesseract path to gamereader_settings.json."""
         try:
             import tempfile, os, json
             
-            # Create app subdirectory in Documents if it doesn't exist
-            game_reader_dir = APP_DOCUMENTS_DIR
+            # Create GameReader subdirectory in Temp if it doesn't exist
+            game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
             os.makedirs(game_reader_dir, exist_ok=True)
-            temp_path = APP_SETTINGS_PATH
+            temp_path = os.path.join(game_reader_dir, 'gamereader_settings.json')
             
             # Load existing settings or create new ones
             settings = {}
@@ -4981,21 +4085,15 @@ class GameTextReader:
             print(f"Error saving custom Tesseract path: {e}")
     
     def load_custom_tesseract_path(self):
-        """Load custom Tesseract path from the settings file."""
+        """Load custom Tesseract path from gamereader_settings.json."""
         try:
             import tempfile, os, json
             
-            temp_path = APP_SETTINGS_PATH
+            temp_path = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', 'gamereader_settings.json')
             
             if os.path.exists(temp_path):
-                try:
-                    with open(temp_path, 'r', encoding='utf-8') as f:
-                        settings = json.load(f)
-                except json.JSONDecodeError as e:
-                    print(f"Error: Settings file is corrupted (JSON parse error): {e}")
-                    print(f"  File: {temp_path}")
-                    print(f"  Common issues: trailing commas, missing quotes, or invalid syntax.")
-                    return None
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
                 
                 custom_path = settings.get('custom_tesseract_path')
                 if custom_path and os.path.exists(custom_path):
@@ -5007,14 +4105,14 @@ class GameTextReader:
         return None
     
     def save_last_layout_path(self, layout_path):
-        """Save the last loaded layout path to the settings file."""
+        """Save the last loaded layout path to gamereader_settings.json."""
         try:
             import tempfile, os, json
             
-            # Create app subdirectory in Documents if it doesn't exist
-            game_reader_dir = APP_DOCUMENTS_DIR
+            # Create GameReader subdirectory in Temp if it doesn't exist
+            game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
             os.makedirs(game_reader_dir, exist_ok=True)
-            temp_path = APP_SETTINGS_PATH
+            temp_path = os.path.join(game_reader_dir, 'gamereader_settings.json')
             
             # Load existing settings or create new ones
             settings = {}
@@ -5037,21 +4135,15 @@ class GameTextReader:
             print(f"Error saving last layout path: {e}")
     
     def load_last_layout_path(self):
-        """Load the last used layout path from the settings file."""
+        """Load the last used layout path from gamereader_settings.json."""
         try:
             import tempfile, os, json
             
-            temp_path = APP_SETTINGS_PATH
+            temp_path = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', 'gamereader_settings.json')
             
             if os.path.exists(temp_path):
-                try:
-                    with open(temp_path, 'r', encoding='utf-8') as f:
-                        settings = json.load(f)
-                except json.JSONDecodeError as e:
-                    print(f"Error: Settings file is corrupted (JSON parse error): {e}")
-                    print(f"  File: {temp_path}")
-                    print(f"  Common issues: trailing commas, missing quotes, or invalid syntax.")
-                    return None
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
                 
                 last_layout_path = settings.get('last_layout_path')
                 if last_layout_path and os.path.exists(last_layout_path):
@@ -5061,647 +4153,17 @@ class GameTextReader:
             print(f"Error loading last layout path: {e}")
         
         return None
-    
-    def save_update_info(self, version, changelog, update_available, download_url=None):
-        """Save update information to the settings file."""
-        try:
-            import os, json, shutil
-            
-            game_reader_dir = APP_DOCUMENTS_DIR
-            os.makedirs(game_reader_dir, exist_ok=True)
-            temp_path = APP_SETTINGS_PATH
-            
-            # Load existing settings or create new ones
-            settings = {}
-            settings_loaded = False
-            if os.path.exists(temp_path):
-                try:
-                    with open(temp_path, 'r', encoding='utf-8') as f:
-                        file_content = f.read().strip()
-                        # Only try to parse if file has content
-                        if file_content:
-                            settings = json.loads(file_content)
-                            settings_loaded = True
-                        else:
-                            # Empty file - start with empty dict
-                            settings = {}
-                            settings_loaded = True
-                except json.JSONDecodeError as e:
-                    # JSON is corrupted - make a backup before overwriting (hidden file)
-                    backup_path = os.path.join(game_reader_dir, APP_SETTINGS_BACKUP_FILENAME)
-                    try:
-                        shutil.copy2(temp_path, backup_path)
-                        # Set as hidden on Windows
-                        if os.name == 'nt':
-                            try:
-                                import ctypes
-                                ctypes.windll.kernel32.SetFileAttributesW(backup_path, 2)  # FILE_ATTRIBUTE_HIDDEN = 2
-                            except:
-                                pass
-                        print(f"Warning: Settings file is corrupted. Backup created at {backup_path}")
-                    except:
-                        pass
-                    print(f"Error parsing settings JSON: {e}")
-                    # Start with empty dict - we'll save update info but other settings will be lost
-                    # User can recover from backup if needed
-                    settings = {}
-                    settings_loaded = True
-                except (FileNotFoundError, IOError, OSError) as e:
-                    print(f"Error loading settings: {e}")
-                    # File might have been deleted - continue with empty dict
-                    settings_loaded = True
-            
-            # Ensure settings is a dictionary
-            if not isinstance(settings, dict):
-                print(f"Warning: Settings is not a dictionary (type: {type(settings)}). Resetting to empty dict.")
-                settings = {}
-            
-            # Add or update update information
-            settings['last_update_check'] = {
-                'version': version,
-                'changelog': changelog,
-                'update_available': update_available,
-                'download_url': download_url
-            }
-            
-            # Save the updated settings
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, indent=4)
-            
-            print(f"Update info saved successfully to: {temp_path}")
-            print(f"  - version={version}, update_available={update_available}")
-            print(f"  - Settings keys: {list(settings.keys())}")
-                
-        except Exception as e:
-            print(f"Error saving update info: {e}")
-    
-    def load_update_info(self):
-        """Load update information from the settings file.
-        
-        Returns:
-            dict: Update info with keys: version, changelog, update_available, download_url, or None if not found
-        """
-        try:
-            import os, json
-            
-            temp_path = APP_SETTINGS_PATH
-            
-            if os.path.exists(temp_path):
-                try:
-                    with open(temp_path, 'r', encoding='utf-8') as f:
-                        file_content = f.read().strip()
-                        if file_content:
-                            settings = json.loads(file_content)
-                        else:
-                            print(f"Settings file is empty: {temp_path}")
-                            return None
-                except json.JSONDecodeError as e:
-                    print(f"Error: Settings file is corrupted (JSON parse error): {e}")
-                    print(f"  File: {temp_path}")
-                    print(f"  The file may need to be fixed manually, or you can delete it to start fresh.")
-                    return None
-                
-                update_info = settings.get('last_update_check')
-                if update_info and isinstance(update_info, dict):
-                    print(f"Update info loaded successfully from: {temp_path}")
-                    print(f"  - version={update_info.get('version')}, update_available={update_info.get('update_available')}")
-                    return update_info
-                else:
-                    print(f"Update info not found in settings file: {temp_path}")
-            else:
-                print(f"Settings file does not exist: {temp_path}")
-                    
-        except (FileNotFoundError, IOError, OSError) as e:
-            print(f"Error reading settings file: {e}")
-        except Exception as e:
-            print(f"Unexpected error loading update info: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        return None
-    
-    def display_changelog(self, text_widget, changelog, version, update_available, update_title_label=None, download_url=None):
-        """Display changelog in the text widget with image support."""
-        text_widget.config(state='normal')
-        text_widget.delete('1.0', tk.END)
-        
-        # Initialize images list for garbage collection
-        if not hasattr(text_widget, '_images'):
-            text_widget._images = []
-        
-        # Update the "News / Updates:" title label
-        if update_title_label:
-            update_title_label.config(
-                text="News / Updates:",
-                font=("Helvetica", 13, "bold")
-            )
-        
-        # Show/hide download button based on update availability
-        download_button = getattr(text_widget, '_download_button', None)
-        status_label = getattr(text_widget, '_status_label', None)
-        if download_button:
-            if update_available and download_url:
-                # Pack before status label to maintain correct order: Check -> Download -> Status
-                if status_label:
-                    download_button.pack(side='left', padx=(0, 10), before=status_label)
-                else:
-                    download_button.pack(side='left', padx=(0, 10))
-            else:
-                download_button.pack_forget()
-        
-        if changelog:
-            # Use the same image insertion logic as update popup
-            self.insert_changelog_with_images(text_widget, changelog)
-        else:
-            text_widget.insert('end', "No changelog available.")
-        
-        # Don't disable yet - images need to load first
-        self.root.after(100, lambda: text_widget.config(state='disabled'))
-    
-    def insert_changelog_with_images(self, text_widget, changelog_text):
-        """Insert changelog text and replace image markers with actual images."""
-        import re
-        import threading
-        import io
-        
-        # Pattern to match [IMAGE:url] or ![alt](url) markdown-style
-        # Supports: [IMAGE:url], [IMAGE:url:width], ![alt](url)
-        image_pattern = r'\[IMAGE:([^\]]+)\]|!\[([^\]]*)\]\(([^\)]+)\)'
-        
-        parts = []
-        last_end = 0
-        
-        for match in re.finditer(image_pattern, changelog_text):
-            # Add text before the image marker
-            if match.start() > last_end:
-                parts.append(('text', changelog_text[last_end:match.start()]))
-            
-            # Extract image URL
-            if match.group(1):  # [IMAGE:url] format
-                url_part = match.group(1)
-                # Check if width is specified: [IMAGE:url:width]
-                if ':' in url_part:
-                    url, width = url_part.rsplit(':', 1)
-                    try:
-                        width = int(width)
-                    except ValueError:
-                        width = 400  # Default width
-                else:
-                    url = url_part
-                    width = 400  # Default width
-            else:  # ![alt](url) markdown format
-                url = match.group(3)
-                width = 400  # Default width
-            
-            parts.append(('image', url, width))
-            last_end = match.end()
-        
-        # Add remaining text
-        if last_end < len(changelog_text):
-            parts.append(('text', changelog_text[last_end:]))
-        
-        # Helper function to insert text with font formatting
-        def insert_text_with_fonts(text_widget, text):
-            """Insert text and apply font tags like [FONT:FontName]text[/FONT] or [FONT:FontName:Size]text[/FONT]"""
-            # Pattern to match [FONT:name]text[/FONT] or [FONT:name:size]text[/FONT]
-            # Pattern to match [FONT:name]text[/FONT] or [FONT:name:size]text[/FONT]
-            # Allow optional whitespace around colons for flexibility
-            # Pattern supports: [FONT:name], [FONT:name:size], [FONT:name:size:bold], [FONT:name::bold]
-            font_pattern = r'\[FONT\s*:\s*([^:\]]+?)(?:\s*:\s*(\d+))?(?:\s*:\s*(bold|normal))?\s*\](.*?)\[/FONT\]'
-            
-            # Test the pattern on a simple example
-            test_text = "[FONT:Helvetica:18]Test[/FONT]"
-            test_match = re.search(font_pattern, test_text, re.DOTALL | re.IGNORECASE)
-            if not test_match:
-                print(f"WARNING: Font regex pattern failed on test! Trying simpler pattern...")
-                # Try simpler pattern without optional whitespace
-                font_pattern = r'\[FONT:([^:\]]+?)(?::(\d+))?(?::(bold|normal))?\](.*?)\[/FONT\]'
-            
-            last_end = 0
-            
-            # Ensure text widget is enabled for tag operations
-            current_state = text_widget.cget('state')
-            if current_state == 'disabled':
-                text_widget.config(state='normal')
-            
-            matches = list(re.finditer(font_pattern, text, re.DOTALL | re.IGNORECASE))
-            
-            # Debug: print if we found matches
-            if matches:
-                print(f"Found {len(matches)} font tag(s) in text")
-                for i, match in enumerate(matches):
-                    print(f"  Match {i+1}: font='{match.group(1)}', size='{match.group(2)}', weight='{match.group(3)}', text='{match.group(4)[:50]}...'")
-            else:
-                print(f"No font tags found in text. Text length: {len(text)}, First 200 chars: {repr(text[:200])}")
-                # Try to find any FONT tags at all
-                if '[FONT' in text.upper():
-                    print(f"  WARNING: Found '[FONT' in text but regex didn't match!")
-                    # Show the context around FONT tags
-                    font_context = re.findall(r'.{0,30}\[FONT.{0,50}\].{0,30}', text, re.DOTALL)
-                    for ctx in font_context[:3]:  # Show first 3 matches
-                        print(f"    Context: {repr(ctx)}")
-            
-            if not matches:
-                # No font tags found, just insert the text as-is
-                text_widget.insert('end', text)
-                if current_state == 'disabled':
-                    text_widget.config(state='disabled')
-                return
-            
-            for match in matches:
-                # Insert text before the font tag
-                if match.start() > last_end:
-                    text_widget.insert('end', text[last_end:match.start()])
-                
-                # Get font name, optional size, and optional weight (bold/normal)
-                font_name = match.group(1).strip()
-                font_size = match.group(2)
-                font_weight = match.group(3)  # 'bold' or 'normal' or None
-                font_text = match.group(4)
-                
-                # Create a unique tag name for this font
-                weight_suffix = f"_{font_weight}" if font_weight else ""
-                tag_name = f"font_{font_name}_{font_size or 'default'}{weight_suffix}"
-                
-                # Configure the tag
-                try:
-                    # Build font tuple: (name, size, weight) or (name, size) or (name,)
-                    if font_size:
-                        size = int(font_size)
-                        if font_weight and font_weight.lower() == 'bold':
-                            font_tuple = (font_name, size, 'bold')
-                        else:
-                            font_tuple = (font_name, size)
-                    else:
-                        # When no size specified, use default size from widget or 12
-                        default_font = text_widget.cget('font')
-                        if isinstance(default_font, tuple) and len(default_font) >= 2:
-                            default_size = default_font[1]
-                        else:
-                            default_size = 12
-                        if font_weight and font_weight.lower() == 'bold':
-                            font_tuple = (font_name, default_size, 'bold')
-                        else:
-                            font_tuple = (font_name, default_size)
-                    
-                    text_widget.tag_config(tag_name, font=font_tuple)
-                    print(f"Configured tag '{tag_name}' with font {font_tuple}")
-                except Exception as e:
-                    print(f"Warning: Could not configure font tag {tag_name}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    # Fallback: insert without formatting
-                    text_widget.insert('end', font_text)
-                    last_end = match.end()
-                    continue
-                
-                # Insert text with the tag
-                # Get position before insertion (end always has trailing newline, so use end-1c to get actual end)
-                start_pos = text_widget.index('end-1c') if text_widget.get('1.0', 'end-1c').strip() else '1.0'
-                # Insert the text
-                text_widget.insert('end', font_text)
-                # Get position after insertion (end-1c to exclude the trailing newline that Tkinter adds)
-                end_pos = text_widget.index('end-1c')
-                # Apply the tag to the inserted text
-                if start_pos != end_pos:  # Only apply if there's actual text
-                    text_widget.tag_add(tag_name, start_pos, end_pos)
-                    weight_info = f", weight={font_weight}" if font_weight else ""
-                    print(f"Applied tag '{tag_name}' (font={font_name}, size={font_size or 'default'}{weight_info}) from {start_pos} to {end_pos}")
-                else:
-                    print(f"Warning: start_pos == end_pos, skipping tag application")
-                
-                last_end = match.end()
-            
-            # Insert remaining text
-            if last_end < len(text):
-                text_widget.insert('end', text[last_end:])
-            
-            # Restore original state
-            if current_state == 'disabled':
-                text_widget.config(state='disabled')
-        
-        # Insert parts into text widget
-        for part in parts:
-            if part[0] == 'text':
-                if part[1]:  # Only insert if text is not empty
-                    insert_text_with_fonts(text_widget, part[1])
-            elif part[0] == 'image':
-                url, width = part[1], part[2]
-                # Insert placeholder text
-                placeholder = f"\n[Loading image from {url}...]\n"
-                text_widget.insert('end', placeholder)
-                image_start = text_widget.index(f'end-{len(placeholder)}c')
-                
-                # Load image in background (non-blocking)
-                def load_and_insert_image(img_url, img_width, start_pos, placeholder_text):
-                    try:
-                        print(f"Loading image from: {img_url}")
-                        # Download image with proper headers to avoid rate limiting
-                        headers = {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-                            'Accept-Language': 'en-US,en;q=0.9',
-                            'Referer': 'https://www.google.com/'
-                        }
-                        img_resp = requests.get(img_url, timeout=10, stream=True, headers=headers)
-                        print(f"Image response status: {img_resp.status_code}")
-                        if img_resp.status_code == 200:
-                            # Load image
-                            img_data = img_resp.content
-                            img = Image.open(io.BytesIO(img_data))
-                            print(f"Image loaded: {img.size}")
-                            
-                            # Resize if needed (maintain aspect ratio)
-                            img_width_px = img_width
-                            aspect_ratio = img.height / img.width
-                            img_height_px = int(img_width_px * aspect_ratio)
-                            
-                            # Limit max dimensions
-                            max_width, max_height = 600, 400
-                            if img_width_px > max_width:
-                                img_width_px = max_width
-                                img_height_px = int(max_width * aspect_ratio)
-                            if img_height_px > max_height:
-                                img_height_px = max_height
-                                img_width_px = int(max_height / aspect_ratio)
-                            
-                            img = img.resize((img_width_px, img_height_px), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            
-                            # Replace placeholder with image (must be on main thread)
-                            def insert_image():
-                                try:
-                                    text_widget.config(state='normal')  # Enable to modify
-                                    # Find the placeholder text
-                                    content = text_widget.get('1.0', 'end')
-                                    placeholder_idx = content.find(placeholder_text)
-                                    if placeholder_idx >= 0:
-                                        # Calculate line and column
-                                        lines_before = content[:placeholder_idx].count('\n')
-                                        line_start = content[:placeholder_idx].rfind('\n') + 1
-                                        col_start = placeholder_idx - line_start
-                                        start_index = f"{lines_before + 1}.{col_start}"
-                                        end_index = f"{start_index}+{len(placeholder_text)}c"
-                                        
-                                        text_widget.delete(start_index, end_index)
-                                        text_widget.image_create(start_index, image=photo)
-                                        text_widget.insert(start_index, "\n\n")
-                                        # Keep reference to prevent garbage collection
-                                        if not hasattr(text_widget, '_images'):
-                                            text_widget._images = []
-                                        text_widget._images.append(photo)
-                                    text_widget.config(state='disabled')  # Disable again
-                                except Exception as e:
-                                    print(f"Error inserting image: {e}")
-                                    text_widget.config(state='normal')
-                                    content = text_widget.get('1.0', 'end')
-                                    placeholder_idx = content.find(placeholder_text)
-                                    if placeholder_idx >= 0:
-                                        lines_before = content[:placeholder_idx].count('\n')
-                                        line_start = content[:placeholder_idx].rfind('\n') + 1
-                                        col_start = placeholder_idx - line_start
-                                        start_index = f"{lines_before + 1}.{col_start}"
-                                        end_index = f"{start_index}+{len(placeholder_text)}c"
-                                        text_widget.delete(start_index, end_index)
-                                        text_widget.insert(start_index, f"\n[Image loaded but failed to display: {str(e)[:50]}]\n\n")
-                                    text_widget.config(state='disabled')
-                            
-                            self.root.after(0, insert_image)
-                        else:
-                            # Replace placeholder with error message
-                            def show_error():
-                                text_widget.config(state='normal')
-                                content = text_widget.get('1.0', 'end')
-                                placeholder_idx = content.find(placeholder_text)
-                                if placeholder_idx >= 0:
-                                    lines_before = content[:placeholder_idx].count('\n')
-                                    line_start = content[:placeholder_idx].rfind('\n') + 1
-                                    col_start = placeholder_idx - line_start
-                                    start_index = f"{lines_before + 1}.{col_start}"
-                                    end_index = f"{start_index}+{len(placeholder_text)}c"
-                                    text_widget.delete(start_index, end_index)
-                                    text_widget.insert(start_index, f"\n[Image failed to load (HTTP {img_resp.status_code}): {img_url}]\n\n")
-                                text_widget.config(state='disabled')
-                            self.root.after(0, show_error)
-                    except Exception as e:
-                        print(f"Exception loading image: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        # Replace placeholder with error message
-                        def show_error():
-                            text_widget.config(state='normal')
-                            content = text_widget.get('1.0', 'end')
-                            placeholder_idx = content.find(placeholder_text)
-                            if placeholder_idx >= 0:
-                                lines_before = content[:placeholder_idx].count('\n')
-                                line_start = content[:placeholder_idx].rfind('\n') + 1
-                                col_start = placeholder_idx - line_start
-                                start_index = f"{lines_before + 1}.{col_start}"
-                                end_index = f"{start_index}+{len(placeholder_text)}c"
-                                text_widget.delete(start_index, end_index)
-                                text_widget.insert(start_index, f"\n[Image error: {str(e)[:100]}]\n\n")
-                            text_widget.config(state='disabled')
-                        self.root.after(0, show_error)
-                
-                # Start loading image in background thread
-                threading.Thread(target=load_and_insert_image, args=(url, width, image_start, placeholder), daemon=True).start()
-        
-        # If no image markers found, still parse and insert text with font formatting
-        if not parts:
-            insert_text_with_fonts(text_widget, changelog_text)
-    
-    def check_and_save_update(self, local_version, changelog_text_widget):
-        """Check for updates and save/display the result."""
-        # This will be called from a background thread
-        # We need to fetch the update info and then update the UI on the main thread
-        # Access globals from the module
-        import sys
-        import re
-        current_module = sys.modules[__name__]
-        USE_GOOGLE_SCRIPT_UPDATE = getattr(current_module, 'USE_GOOGLE_SCRIPT_UPDATE', False)
-        UPDATE_SERVER_URL = getattr(current_module, 'UPDATE_SERVER_URL', None)
-        GITHUB_REPO = getattr(current_module, 'GITHUB_REPO', '')
-        
-        # Update status label to show checking (with simple animation)
-        status_label = getattr(changelog_text_widget, '_status_label', None)
-        animation_frames = [
-            "Checking for updates .",
-            "Checking for updates   .",
-            "Checking for updates     .",
-        ]
-        animation_state = {"running": False, "job": None, "index": 0}
-
-        def _stop_status_animation():
-            """Cancel any pending status animation frame."""
-            animation_state["running"] = False
-            job = animation_state.get("job")
-            if job:
-                try:
-                    self.root.after_cancel(job)
-                except Exception:
-                    pass
-                animation_state["job"] = None
-
-        def _animate_status_label():
-            """Cycle through frames while an update check is in progress."""
-            if not animation_state["running"] or not status_label:
-                return
-            frame = animation_frames[animation_state["index"] % len(animation_frames)]
-            animation_state["index"] += 1
-            status_label.config(text=frame, foreground="blue")
-            animation_state["job"] = self.root.after(300, _animate_status_label)
-
-        def start_status_animation():
-            if not status_label:
-                return
-            def _start():
-                _stop_status_animation()
-                animation_state["index"] = 0
-                animation_state["running"] = True
-                _animate_status_label()
-            self.root.after(0, _start)
-
-        def set_status(text, color):
-            """Stop animation and update the status label text/color."""
-            if not status_label:
-                return
-            def _set():
-                _stop_status_animation()
-                status_label.config(text=text, foreground=color)
-            self.root.after(0, _set)
-
-        if status_label:
-            start_status_animation()
-        
-        if USE_GOOGLE_SCRIPT_UPDATE and UPDATE_SERVER_URL and "YOUR_SCRIPT_ID" not in UPDATE_SERVER_URL:
-            try:
-                headers = {
-                    'User-Agent': f'{APP_NAME}/{APP_VERSION}',
-                    'Accept': 'application/json'
-                }
-                resp = requests.get(UPDATE_SERVER_URL, timeout=10, allow_redirects=True, headers=headers)
-                
-                if resp.status_code == 200:
-                    try:
-                        response_text = resp.text
-                        if response_text.startswith('\ufeff'):
-                            response_text = response_text[1:]
-                        response_text = response_text.strip()
-                        
-                        if '<html' in response_text.lower() or '<!doctype' in response_text.lower():
-                            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
-                            if json_match:
-                                response_text = json_match.group(0)
-                        
-                        if not response_text.startswith('{'):
-                            json_start = response_text.find('{')
-                            if json_start > 0:
-                                response_text = response_text[json_start:]
-                        
-                        try:
-                            update_info = resp.json()
-                        except (ValueError, json.JSONDecodeError):
-                            update_info = json.loads(response_text)
-                        
-                        if not isinstance(update_info, dict):
-                            raise ValueError("Response is not a JSON object")
-                        
-                        remote_version = update_info.get('version')
-                        remote_changelog = update_info.get('changelog', '')
-                        download_url = update_info.get('download_url', f'https://github.com/{GITHUB_REPO}/releases')
-                        
-                        # Get version_tuple function
-                        version_tuple_func = getattr(current_module, 'version_tuple', None)
-                        if version_tuple_func:
-                            update_available = remote_version and version_tuple_func(remote_version) > version_tuple_func(local_version)
-                        else:
-                            update_available = False
-                        
-                        # Load previous update info to check if changelog changed
-                        previous_update_info = self.load_update_info()
-                        previous_changelog = previous_update_info.get('changelog', '') if previous_update_info else ''
-                        # Only consider changelog changed if we had a previous changelog and it's different
-                        changelog_changed = (previous_changelog and 
-                                           remote_changelog.strip() != previous_changelog.strip())
-                        
-                        # Save to settings
-                        self.save_update_info(remote_version or "Unknown", remote_changelog, update_available, download_url)
-                        
-                        # Update UI on main thread - get update_title from stored reference
-                        update_title_ref = getattr(changelog_text_widget, '_update_title', None)
-                        # Store download_url on widget for button access
-                        changelog_text_widget._download_url = download_url
-                        
-                        # Update status label based on result
-                        if status_label:
-                            if update_available:
-                                status_text = "Update available!"
-                                status_color = "green"
-                            elif changelog_changed and not update_available:
-                                status_text = "News Update!"
-                                status_color = "green"
-                            else:
-                                status_text = "No update available"
-                                status_color = "gray"
-                            set_status(status_text, status_color)
-                        
-                        self.root.after(0, lambda: self.display_changelog(changelog_text_widget, remote_changelog, remote_version or "Unknown", update_available, update_title_ref, download_url))
-                        
-                    except Exception as e:
-                        error_msg = f"Error checking for updates: {str(e)[:100]}"
-                        self.save_update_info("Unknown", error_msg, False)
-                        update_title_ref = getattr(changelog_text_widget, '_update_title', None)
-                        changelog_text_widget._download_url = None
-                        
-                        # Update status label to show error
-                        if status_label:
-                            set_status("Error checking for updates", "red")
-                        
-                        self.root.after(0, lambda: self.display_changelog(changelog_text_widget, error_msg, "Unknown", False, update_title_ref, None))
-                else:
-                    # Non-200 status code
-                    error_msg = f"Server returned status code {resp.status_code}"
-                    self.save_update_info("Unknown", error_msg, False)
-                    update_title_ref = getattr(changelog_text_widget, '_update_title', None)
-                    changelog_text_widget._download_url = None
-                    
-                    # Update status label to show error
-                    if status_label:
-                        set_status("Error checking for updates", "red")
-                    
-                    self.root.after(0, lambda: self.display_changelog(changelog_text_widget, error_msg, "Unknown", False, update_title_ref, None))
-            except Exception as e:
-                error_msg = f"Unable to fetch update information: {str(e)[:100]}"
-                self.save_update_info("Unknown", error_msg, False)
-                update_title_ref = getattr(changelog_text_widget, '_update_title', None)
-                changelog_text_widget._download_url = None
-                
-                # Update status label to show error
-                if status_label:
-                    set_status("Error checking for updates", "red")
-                
-                self.root.after(0, lambda: self.display_changelog(changelog_text_widget, error_msg, "Unknown", False, update_title_ref, None))
-        else:
-            # If update checking is disabled/misconfigured, stop animation to avoid a stuck label
-            set_status("Update check not configured", "gray")
 
     def load_edit_view_settings(self):
-        """Load edit view settings (hotkey, screenshot background, alpha) from the settings file."""
+        """Load edit view settings (hotkey, screenshot background, alpha) from gamereader_settings.json."""
         try:
             import tempfile, os, json
             
-            temp_path = APP_SETTINGS_PATH
+            temp_path = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', 'gamereader_settings.json')
             
             if os.path.exists(temp_path):
-                try:
-                    with open(temp_path, 'r', encoding='utf-8') as f:
-                        settings = json.load(f)
-                except json.JSONDecodeError as e:
-                    print(f"Error: Settings file is corrupted (JSON parse error): {e}")
-                    print(f"  File: {temp_path}")
-                    print(f"  Common issues: trailing commas, missing quotes, or invalid syntax.")
-                    print(f"  The file may need to be fixed manually, or you can delete it to start fresh.")
-                    return
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
                 
                 # Load edit area hotkey
                 saved_hotkey = settings.get('edit_area_hotkey')
@@ -5755,8 +4217,6 @@ class GameTextReader:
                     
         except Exception as e:
             print(f"Error loading edit view settings: {e}")
-            import traceback
-            traceback.print_exc()
 
     
     def restart_tesseract(self):
@@ -5850,7 +4310,7 @@ class GameTextReader:
         top_frame.pack(fill='x', padx=10, pady=5)
         
         # Top frame contents - Title
-        title_label = tk.Label(top_frame, text=f"{APP_NAME} v{APP_VERSION}", font=("Helvetica", 12, "bold"))
+        title_label = tk.Label(top_frame, text=f"GameReader v{APP_VERSION}", font=("Helvetica", 12, "​【𝟯𝟬 𝗰𝗺】bold"))
         title_label.pack(side='left', padx=(0, 20))
         
         # Volume control in top frame
@@ -5898,7 +4358,7 @@ class GameTextReader:
         
         tk.Label(layout_frame, text="Loaded Layout:").pack(side='left')
         # Show 'n/a' when no layout is loaded, without changing the underlying value used by logic
-        self.layout_label = tk.Label(layout_frame, text="n/a", font=("Helvetica", 10, "bold"))
+        self.layout_label = tk.Label(layout_frame, text="n/a", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"))
         self.layout_label.pack(side='left', padx=5)
 
         def _refresh_layout_label(*_):
@@ -5941,7 +4401,7 @@ class GameTextReader:
         
         # Status label - centered between pause button and loaded layout name, on same line as Stop Hotkey button
         self.status_label = tk.Label(buttons_right_frame, text="", 
-                                    font=("Helvetica", 10, "bold"),  # Changed font and size
+                                    font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),  # Changed font and size
                                     fg="black")  # Optional: added color for better visibility
         
         def _center_status_label():
@@ -6054,19 +4514,15 @@ class GameTextReader:
             """Save screenshot background setting when checkbox is toggled"""
             try:
                 import tempfile, json
-                game_reader_dir = APP_DOCUMENTS_DIR
+                game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
                 os.makedirs(game_reader_dir, exist_ok=True)
-                temp_path = APP_SETTINGS_PATH
+                temp_path = os.path.join(game_reader_dir, 'gamereader_settings.json')
                 
-                # Load existing settings or create new ones
+                # Load existing settings
                 settings = {}
                 if os.path.exists(temp_path):
-                    try:
-                        with open(temp_path, 'r', encoding='utf-8') as f:
-                            settings = json.load(f)
-                    except (FileNotFoundError, json.JSONDecodeError, IOError, OSError) as e:
-                        print(f"Error loading settings: {e}")
-                        settings = {}
+                    with open(temp_path, 'r', encoding='utf-8') as f:
+                        settings = json.load(f)
                 
                 # Update the setting
                 settings['edit_area_screenshot_bg'] = self.screenshot_bg_var.get()
@@ -6154,7 +4610,7 @@ class GameTextReader:
             self.status_label.config(
                 text="→ Tesseract OCR missing. click the [Info/Help] button for instructions. ←",
                 fg="red",
-                font=("Helvetica", 10, "bold")
+                font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold")
             )
         
 
@@ -6213,7 +4669,7 @@ class GameTextReader:
         ignored_words_label = tk.Label(
             main_frame,
             text="Ignored Word List:",
-            font=("Helvetica", 10, "bold")
+            font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold")
         )
         ignored_words_label.pack(anchor='w', pady=(0, 5))
         
@@ -6254,31 +4710,31 @@ class GameTextReader:
         # Load current value from StringVar or show example
         current_value = self.bad_word_list.get().strip()
         if current_value:
-            ignored_words_text.insert('1.0', current_value)
+            ignored_words_text.insert('1.0'​【𝟯𝟬 𝗰𝗺】, current_value)
             ignored_words_text.config(fg="black")
         else:
-            ignored_words_text.insert('1.0', example_text)
+            ignored_words_text.insert('1.0'​【𝟯𝟬 𝗰𝗺】, example_text)
             ignored_words_text.config(fg="gray")
         
         # Function to handle focus in - clear example if it's the placeholder
         def on_focus_in(event):
-            content = ignored_words_text.get('1.0', tk.END).strip()
+            content = ignored_words_text.get('1.0'​【𝟯𝟬 𝗰𝗺】, tk.END).strip()
             if content == example_text:
-                ignored_words_text.delete('1.0', tk.END)
+                ignored_words_text.delete('1.0'​【𝟯𝟬 𝗰𝗺】, tk.END)
                 ignored_words_text.config(fg="black")
         
         # Function to handle focus out - show example if empty, sync otherwise
         def on_focus_out(event):
-            content = ignored_words_text.get('1.0', tk.END).strip()
+            content = ignored_words_text.get('1.0'​【𝟯𝟬 𝗰𝗺】, tk.END).strip()
             if not content:
-                ignored_words_text.insert('1.0', example_text)
+                ignored_words_text.insert('1.0'​【𝟯𝟬 𝗰𝗺】, example_text)
                 ignored_words_text.config(fg="gray")
             else:
                 sync_ignored_words()
         
         # Function to sync Text widget with StringVar
         def sync_ignored_words():
-            content = ignored_words_text.get('1.0', tk.END).strip()
+            content = ignored_words_text.get('1.0'​【𝟯𝟬 𝗰𝗺】, tk.END).strip()
             # Don't save the example text
             if content != example_text:
                 # Only mark as unsaved if the value actually changed
@@ -6291,9 +4747,9 @@ class GameTextReader:
         
         # Function to handle key release
         def on_key_release(event):
-            content = ignored_words_text.get('1.0', tk.END).strip()
+            content = ignored_words_text.get('1.0'​【𝟯𝟬 𝗰𝗺】, tk.END).strip()
             if content == example_text:
-                ignored_words_text.delete('1.0', tk.END)
+                ignored_words_text.delete('1.0'​【𝟯𝟬 𝗰𝗺】, tk.END)
                 ignored_words_text.config(fg="black")
             else:
                 sync_ignored_words()
@@ -6487,7 +4943,7 @@ class GameTextReader:
         # Add close button at the bottom
         def on_close():
             # Make sure we don't save the example text
-            content = ignored_words_text.get('1.0', tk.END).strip()
+            content = ignored_words_text.get('1.0'​【𝟯𝟬 𝗰𝗺】, tk.END).strip()
             if content != example_text:
                 sync_ignored_words()
             
@@ -6562,8 +5018,8 @@ class GameTextReader:
     def show_info(self):
         # Create Tkinter window with a modern look
         info_window = tk.Toplevel(self.root)
-        info_window.title(f"{APP_NAME} - Information")
-        info_window.geometry("810x600")  # Slightly taller for better spacing
+        info_window.title("GameReader - Information")
+        info_window.geometry("900x600")  # Slightly taller for better spacing
 
         # --- Set flag to prevent hotkeys from interfering with info window ---
         self.info_window_open = True
@@ -6588,24 +5044,23 @@ class GameTextReader:
         main_frame = ttk.Frame(info_window, padding="15 10 15 5")
         main_frame.pack(fill='both', expand=True)
         
-        # Top-left title label (no surrounding frame to avoid covering banners)
-        title_label = ttk.Label(
-            main_frame,
-            text=f"{APP_NAME} v{APP_VERSION}",
-            font=("Helvetica", 16, "bold")
-        )
-        title_label.pack(anchor='w', pady=(0, 10))
+        # Title section
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill='x', pady=(0, 10))
         
-        # Icon will be added near the banners (not within the title)
+        title_label = ttk.Label(title_frame, 
+                               text=f"GameReader v{APP_VERSION}", 
+                               font=("Helvetica", 16, "​【𝟰𝟭 𝗰𝗺】bold"))
+        title_label.pack(side='left')
         
-        # Main content area - single column layout (more free-form)
-        content_frame = ttk.Frame(main_frame)
-        content_frame.pack(fill='both', expand=True, pady=(0, 10))
+
         
-        # Banner data will be stored and banners created later when banners_frame is ready
-        
-        # Calculate wraplength for text - now we have more space since banners are above scroll window
-        text_wraplength = 800  # More space available without right column
+        # Credits/Links Area replaced by clickable images
+        credits_frame = ttk.Frame(main_frame)
+        credits_frame.pack(fill='x', pady=(0, 10))
+
+        images_row = ttk.Frame(credits_frame)
+        images_row.pack(fill='x', pady=(0, 3))
 
         # Resolve Assets paths
         assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Assets')
@@ -6624,10 +5079,20 @@ class GameTextReader:
             info_window.google_pil = google_img
             info_window.github_pil = github_img
 
-            # Calculate scale for images in a column - set to 0.75 size
+            # Determine available width and compute downscale factor so all three fit on one row
             info_window.update_idletasks()
+            try:
+                window_width = info_window.winfo_width()
+            except Exception:
+                window_width = 900
+            horizontal_padding = 40  # main_frame left/right padding approx
+            per_canvas_pad = 20      # padx=10 on each side per canvas
+            total_pad = 3 * per_canvas_pad
             hover_scale = 1.08
-            base_scale = 0.78  # Images at 75% of original size
+            sum_orig_widths = coffee_img.size[0] + google_img.size[0] + github_img.size[0]
+            available_width = max(200, window_width - horizontal_padding)
+            needed_width = hover_scale * sum_orig_widths + total_pad
+            base_scale = 1.0 if needed_width <= available_width else max(0.2, (available_width - total_pad) / (hover_scale * sum_orig_widths))
 
             # Create normal and hover-sized images with scaling applied
             def make_photos(pil_img):
@@ -6696,123 +5161,181 @@ class GameTextReader:
                         canvas._anim_frames = frames  # keep refs
 
                 step(0)
-            
-            # Store animation functions for later use when creating banners
-            info_window._animate_to_hover = animate_to_hover
-            info_window._animate_to_normal = animate_to_normal
-            info_window._cancel_anim = _cancel_anim
 
 
 
-            # Store banner creation data for later (banners_frame will be created above changelog)
-            info_window._coffee_data = {
-                'cw': info_window.coffee_photo_hover.width(),
-                'ch': info_window.coffee_photo_hover.height(),
-                'photo': info_window.coffee_photo,
-                'photo_hover': info_window.coffee_photo_hover,
-                'pil': info_window.coffee_pil
-            }
+            # Coffee image (fixed-size canvas, allows hover to be clipped by bounds)
+            coffee_cw = info_window.coffee_photo_hover.width()
+            coffee_ch = info_window.coffee_photo_hover.height()
+            coffee_canvas = tk.Canvas(
+                images_row,
+                width=coffee_cw,
+                height=coffee_ch,
+                highlightthickness=0,
+                bd=0,
+                cursor='hand2'​【𝟲𝟭 𝗰𝗺】,
+                takefocus=1
+            )
+            coffee_canvas.pack(side='left', padx=10)
+            coffee_img_id = coffee_canvas.create_image(coffee_cw // 2, coffee_ch // 2, image=info_window.coffee_photo)
             
-            # Store banner creation data for later
-            info_window._google_data = {
-                'cw': info_window.google_photo_hover.width(),
-                'ch': info_window.google_photo_hover.height(),
-                'photo': info_window.google_photo,
-                'photo_hover': info_window.google_photo_hover,
-                'pil': info_window.google_pil
-            }
+            # Store original hover state for coffee canvas
+            coffee_canvas._was_hovered = False
+            
+            def coffee_click_start(e):
+                # Store current hover state and instantly shrink image
+                coffee_canvas._was_hovered = getattr(coffee_canvas, '_is_hovered', False)
+                # Cancel any ongoing animations and instantly show normal size
+                _cancel_anim(coffee_canvas)
+                w, h = info_window.coffee_pil.size
+                w_norm = max(1, int(w * base_scale))
+                h_norm = max(1, int(h * base_scale))
+                normal_photo = ImageTk.PhotoImage(info_window.coffee_pil.resize((w_norm, h_norm), Image.LANCZOS))
+                coffee_canvas.itemconfig(coffee_img_id, image=normal_photo)
+                # Keep reference to prevent garbage collection
+                coffee_canvas._click_photo = normal_photo
+            
+            def coffee_click_end(e):
+                # Restore to hover state if it was hovered before
+                if coffee_canvas._was_hovered:
+                    animate_to_hover(coffee_canvas, coffee_img_id, info_window.coffee_pil)
+                # Open URL when click is released
+                print("Coffee image clicked!")
+                open_url("https://buymeacoffee.com/mertennor")
+            
+            # Bind animation events - URL opening is handled in click_end
+            coffee_canvas.bind("<ButtonPress-1>", coffee_click_start)
+            coffee_canvas.bind("<ButtonRelease-1>", coffee_click_end)
+            coffee_canvas.bind(
+                "<Enter>",
+                lambda e, c=coffee_canvas, iid=coffee_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, info_window.coffee_pil))
+            )
+            coffee_canvas.bind(
+                "<Leave>",
+                lambda e, c=coffee_canvas, iid=coffee_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, info_window.coffee_pil))
+            )
 
-            # Store banner creation data for later
-            info_window._github_data = {
-                'cw': info_window.github_photo_hover.width(),
-                'ch': info_window.github_photo_hover.height(),
-                'photo': info_window.github_photo,
-                'photo_hover': info_window.github_photo_hover,
-                'pil': info_window.github_pil
-            }
+            # Google Form image (fixed-size canvas)
+            google_cw = info_window.google_photo_hover.width()
+            google_ch = info_window.google_photo_hover.height()
+            google_canvas = tk.Canvas(
+                images_row,
+                width=google_cw,
+                height=google_ch,
+                highlightthickness=0,
+                bd=0,
+                cursor='hand2'​【𝟲𝟭 𝗰𝗺】,
+                takefocus=1
+            )
+            google_canvas.pack(side='left', padx=10)
+            google_img_id = google_canvas.create_image(google_cw // 2, google_ch // 2, image=info_window.google_photo)
             
-            # Store base_scale and hover_scale for banner creation function
-            info_window._base_scale = base_scale
-            info_window._hover_scale = hover_scale
+            # Store original hover state for google canvas
+            google_canvas._was_hovered = False
             
-            # Program icon and button - positioned next to title
-            def on_how_to_use():
-                self.show_how_to_use()
+            def google_click_start(e):
+                # Store current hover state and instantly shrink image
+                google_canvas._was_hovered = getattr(google_canvas, '_is_hovered', False)
+                # Cancel any ongoing animations and instantly show normal size
+                _cancel_anim(google_canvas)
+                w, h = info_window.google_pil.size
+                w_norm = max(1, int(w * base_scale))
+                h_norm = max(1, int(h * base_scale))
+                normal_photo = ImageTk.PhotoImage(info_window.google_pil.resize((w_norm, h_norm), Image.LANCZOS))
+                google_canvas.itemconfig(google_img_id, image=normal_photo)
+                # Keep reference to prevent garbage collection
+                google_canvas._click_photo = normal_photo
             
-            # Program icon with hover animation - positioned to the right of title label
-            # Icon size - adjust this value to scale the icon (default: 64)
-            icon_size = 75  # Change this value to make the icon larger or smaller
-            icon_hover_scale = 1.08  # Scale factor when hovering (same as banners)
+            def google_click_end(e):
+                # Restore to hover state if it was hovered before
+                if google_canvas._was_hovered:
+                    animate_to_hover(google_canvas, google_img_id, info_window.google_pil)
+                # Open URL when click is released
+                print("Google Form image clicked!")
+                open_url("https://forms.gle/8YBU8atkgwjyzdM79")
             
-            icon_path = os.path.join(assets_dir, 'icon.ico')
-            if os.path.exists(icon_path):
-                try:
-                    # Load icon image
-                    icon_img = Image.open(icon_path)
-                    info_window.icon_pil = icon_img  # Store PIL image for animation
-                    
-                    # Create normal and hover-sized images
-                    icon_img_normal = icon_img.copy()
-                    icon_img_normal.thumbnail((icon_size, icon_size), Image.LANCZOS)
-                    icon_normal_photo = ImageTk.PhotoImage(icon_img_normal)
-                    
-                    icon_img_hover = icon_img.copy()
-                    hover_size = int(icon_size * icon_hover_scale)
-                    icon_img_hover.thumbnail((hover_size, hover_size), Image.LANCZOS)
-                    icon_hover_photo = ImageTk.PhotoImage(icon_img_hover)
-                    
-                    # Store photos on window to prevent garbage collection
-                    info_window.icon_photo = icon_normal_photo
-                    info_window.icon_photo_hover = icon_hover_photo
-                    
-                    # Store icon data for later creation (will be created in right_side_frame)
-                    info_window._icon_data = {
-                        'cw': icon_hover_photo.width(),
-                        'ch': icon_hover_photo.height(),
-                        'photo': icon_normal_photo,
-                        'photo_hover': icon_hover_photo,
-                        'pil': icon_img,
-                        'size': icon_size,
-                        'hover_scale': icon_hover_scale
-                    }
-                    
-                except Exception as e:
-                    print(f"Error loading program icon: {e}")
+            # Bind animation events - URL opening is handled in click_end
+            google_canvas.bind("<ButtonPress-1>", google_click_start)
+            google_canvas.bind("<ButtonRelease-1>", google_click_end)
+            google_canvas.bind(
+                "<Enter>",
+                lambda e, c=google_canvas, iid=google_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, info_window.google_pil))
+            )
+            google_canvas.bind(
+                "<Leave>",
+                lambda e, c=google_canvas, iid=google_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, info_window.google_pil))
+            )
+
+            # GitHub image (fixed-size canvas)
+            github_cw = info_window.github_photo_hover.width()
+            github_ch = info_window.github_photo_hover.height()
+            github_canvas = tk.Canvas(
+                images_row,
+                width=github_cw,
+                height=github_ch,
+                highlightthickness=0,
+                bd=0,
+                cursor='hand2'​【𝟲𝟭 𝗰𝗺】,
+                takefocus=1
+            )
+            github_canvas.pack(side='left', padx=10)
+            github_img_id = github_canvas.create_image(github_cw // 2, github_ch // 2, image=info_window.github_photo)
             
-            # How to use button will be created later in right_side_frame (below icon)
+            # Store original hover state for github canvas
+            github_canvas._was_hovered = False
             
+            def github_click_start(e):
+                # Store current hover state and instantly shrink image
+                github_canvas._was_hovered = getattr(github_canvas, '_is_hovered', False)
+                # Cancel any ongoing animations and instantly show normal size
+                _cancel_anim(github_canvas)
+                w, h = info_window.github_pil.size
+                w_norm = max(1, int(w * base_scale))
+                h_norm = max(1, int(h * base_scale))
+                normal_photo = ImageTk.PhotoImage(info_window.github_pil.resize((w_norm, h_norm), Image.LANCZOS))
+                github_canvas.itemconfig(github_img_id, image=normal_photo)
+                # Keep reference to prevent garbage collection
+                github_canvas._click_photo = normal_photo
+            
+            def github_click_end(e):
+                # Restore to hover state if it was hovered before
+                if github_canvas._was_hovered:
+                    animate_to_hover(github_canvas, github_img_id, info_window.github_pil)
+                # Open URL when click is released
+                print("GitHub image clicked!")
+                open_url("https://github.com/MertenNor/GameReader")
+            
+            # Bind animation events - URL opening is handled in click_end
+            github_canvas.bind("<ButtonPress-1>", github_click_start)
+            github_canvas.bind("<ButtonRelease-1>", github_click_end)
+            github_canvas.bind(
+                "<Enter>",
+                lambda e, c=github_canvas, iid=github_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, info_window.github_pil))
+            )
+            github_canvas.bind(
+                "<Leave>",
+                lambda e, c=github_canvas, iid=github_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, info_window.github_pil))
+            )
         except Exception as e:
             # Fallback text if images can't be displayed
-            print(f"Error displaying info images: {e}")
+            fallback = ttk.Label(credits_frame, text=f"Error displaying info images: {e}", foreground='red')
+            fallback.pack(anchor='w')
 
         # Coffee note below the images
-     #   coffee_note = ttk.Label(
-     #       credits_frame,
-     #       text="☕ Note: You don't have to fuel my caffeine addiction… but I wouldn't say no! Every coffee helps me argue with AI until the code finally works. All funds are shared between me and the few helping me bring this project to life.",
-     #       font=("Helvetica", 9, "bold"),
-     #       foreground='#666666',
-     #       wraplength=800,
-     #      justify='center'
-      #  )
-      #  coffee_note.pack(pady=(8, 10), anchor='center')
+        coffee_note = ttk.Label(
+            credits_frame,
+            text="☕ Note: You don't have to fuel my caffeine addiction… but I wouldn't say no! Every coffee helps me argue with AI until the code finally works. All funds are shared between me and the few helping me bring this project to life.",
+            font=("Helvetica", 9, "​【𝟮𝟯 𝗰𝗺】bold"),
+            foreground='#666666'​【𝟮𝟬𝟯 𝗸𝗺】,
+            wraplength=800,
+            justify='center'
+        )
+        coffee_note.pack(pady=(8, 10), anchor='center')
 
         
-        # Container for Tesseract Status (left) and Icon/Banners (right)
-        status_container = ttk.Frame(content_frame)
-        status_container.pack(fill='x', pady=(5, 0), padx=(0, 5))
-        
-        # Tesseract Status Indicator (left side)
-        tesseract_status_frame = ttk.Frame(status_container)
-        tesseract_status_frame.pack(side='left', fill='both', expand=True, padx=(0, 0))
-        # Store reference for z-order manipulation
-        info_window.tesseract_status_frame = tesseract_status_frame
-        
-        # Icon/Banners container is attached to the toplevel so it can float above other content
-        icon_and_banners_container = ttk.Frame(info_window)
-        # Position at top-right of the window with a slight upward offset for appearance
-        icon_and_banners_container.place(relx=1.0, x=-15, y=20, anchor='ne')
-        info_window.icon_and_banners_container = icon_and_banners_container
-        icon_and_banners_container.lift()  # ensure it stays on top
+        # Tesseract Status Indicator
+        tesseract_status_frame = ttk.Frame(credits_frame)
+        tesseract_status_frame.pack(fill='x', pady=(5, 0))
         
         # Check Tesseract installation status
         tesseract_installed, tesseract_message = self.check_tesseract_installed()
@@ -6822,596 +5345,168 @@ class GameTextReader:
         status_text = "✓ " if tesseract_installed else "✗ "
         
         if tesseract_installed:
-            # Simple status when installed - improved layout for narrow width
+            # Simple status when installed - create a frame to hold both labels
             status_row = ttk.Frame(tesseract_status_frame)
-            status_row.pack(anchor='w', pady=(0, 8), fill='x')
-            
-            # Status line
-            status_line = ttk.Frame(status_row)
-            status_line.pack(anchor='w', fill='x')
+            status_row.pack(anchor='w', pady=(0, 5))
             
             # Black text for main status
             main_status_label = ttk.Label(
-                status_line,
+                status_row,
                 text="Tesseract OCR Status: ",
-                font=("Helvetica", 10, "bold"),
+                font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"),
                 foreground='black'
             )
             main_status_label.pack(side='left')
             
             # Green checkmark
             checkmark_label = ttk.Label(
-                status_line,
+                status_row,
                 text=status_text,
-                font=("Helvetica", 10, "bold"),
+                font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"),
                 foreground=status_color
             )
             checkmark_label.pack(side='left')
             
             # Green text for (Installed)
             installed_label = ttk.Label(
-                status_line,
+                status_row,
                 text="(Installed)",
-                font=("Helvetica", 10, "bold"),
+                font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"),
                 foreground='green'
             )
             installed_label.pack(side='left')
             
-            # Add "Locate Tesseract" button on new line if needed
+            # Add "Locate Tesseract" button
             locate_button = ttk.Button(
                 status_row,
-                text="Set custom path... ",
+                text="Set custom path...",
                 command=self.locate_tesseract_executable
             )
-            locate_button.pack(anchor='w', pady=(5, 0))
+            locate_button.pack(side='left', padx=(10, 0))
         else:
-            # Detailed status when not installed - improved layout for narrow width
+            # Detailed status when not installed - create a frame to hold both labels
             status_row = ttk.Frame(tesseract_status_frame)
-            status_row.pack(anchor='w', pady=(0, 8), fill='x')
-            
-            # Status line
-            status_line = ttk.Frame(status_row)
-            status_line.pack(anchor='w', fill='x')
+            status_row.pack(anchor='w', pady=(0, 5))
             
             # Black text for main status
             main_status_label = ttk.Label(
-                status_line,
+                status_row,
                 text="Tesseract OCR Status: ",
-                font=("Helvetica", 10, "bold"),
+                font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"),
                 foreground='black'
             )
             main_status_label.pack(side='left')
             
             # Red X
             x_label = ttk.Label(
-                status_line,
+                status_row,
                 text=status_text,
-                font=("Helvetica", 10, "bold"),
+                font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"),
                 foreground=status_color
             )
             x_label.pack(side='left')
             
-            # Required text on new line for better wrapping
+            # Black text for (Required for GameReader to fully function)
             required_label = ttk.Label(
                 status_row,
-                text=f"(Required for {APP_NAME} to fully function)",
-                font=("Helvetica", 9, "bold"),
-                foreground='red',
-                wraplength=text_wraplength,
-                justify='left'
+                text="(Requierd for GameReader to fully function)",
+                font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"),
+                foreground='red'
             )
-            required_label.pack(anchor='w', pady=(3, 0))
+            required_label.pack(side='left')
             
-            # Add "Locate Tesseract" button
+            # Add "Locate Tesseract" button for when not installed
             locate_button_not_installed = ttk.Button(
                 status_row,
                 text="Set custom path...",
                 command=self.locate_tesseract_executable
             )
-            locate_button_not_installed.pack(anchor='w', pady=(5, 0))
+            locate_button_not_installed.pack(side='left', padx=(10, 0))
             
-            # Reason label - wrap text with better formatting
+            # Reason label
             reason_label = ttk.Label(
                 tesseract_status_frame,
                 text=f"Reason: {tesseract_message}",
                 font=("Helvetica", 10),
-                foreground='red',
-                wraplength=text_wraplength,
-                justify='left'
+                foreground='red'
             )
-            reason_label.pack(anchor='w', pady=(0, 8))
+            reason_label.pack(anchor='w', pady=(0, 5))
         
-        # Download instruction and clickable URLs - improved formatting for narrow width
-        download_label = ttk.Label(tesseract_status_frame,
-                                   text="Tesseract OCR Download links:",
-                                   font=("Helvetica", 10, "bold"),
-                                   foreground='black',
-                                   wraplength=text_wraplength,
-                                   justify='left')
-        download_label.pack(anchor='w', pady=(0, 5))
-        
-        # Links stacked vertically for better readability in narrow column
-        links_container = ttk.Frame(tesseract_status_frame)
-        links_container.pack(anchor='w', fill='x', pady=(0, 10))
+        # Download instruction and clickable URLs on the same line (always visible)
+        download_row = ttk.Frame(tesseract_status_frame)
+        download_row.pack(anchor='w')
+        download_label = ttk.Label(download_row,
+                                   text="Download Tesseract OCR from here: ",
+                                   font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),
+                                   foreground='black')
+        download_label.pack(side='left')
         
         # First link to Tesseract releases page
-        releases_frame = ttk.Frame(links_container)
-        releases_frame.pack(anchor='w', pady=(0, 3), fill='x')
-        
-        releases_text = ttk.Label(releases_frame,
-                                   text="Releases page:",
-                                   font=("Helvetica", 9),
-                                   foreground='black')
-        releases_text.pack(side='left')
-        
-        tesseract_link = ttk.Label(releases_frame,
+        tesseract_link = ttk.Label(download_row,
                                    text="https://github.com/tesseract-ocr/tesseract/releases",
-                                   font=("Helvetica", 9),
+                                   font=("Helvetica", 10),
                                    foreground='blue',
                                    cursor='hand2')
-        tesseract_link.pack(side='left', padx=(5, 0))
+        tesseract_link.pack(side='left')
         tesseract_link.bind("<Button-1>", lambda e: open_url("https://github.com/tesseract-ocr/tesseract/releases"))
-        tesseract_link.bind("<Enter>", lambda e: tesseract_link.configure(font=("Helvetica", 9, "underline")))
-        tesseract_link.bind("<Leave>", lambda e: tesseract_link.configure(font=("Helvetica", 9)))
+        tesseract_link.bind("<Enter>", lambda e: tesseract_link.configure(font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】underline")))
+        tesseract_link.bind("<Leave>", lambda e: tesseract_link.configure(font=("Helvetica", 10)))
+        
+        # Add separator
+        ttk.Label(download_row, text=" | ").pack(side='left')
         
         # Direct download link for Windows installer
-        installer_frame = ttk.Frame(links_container)
-        installer_frame.pack(anchor='w', pady=(0, 0), fill='x')
-        
-        installer_text = ttk.Label(installer_frame,
-                               text="Direct download link to installer:",
-                               font=("Helvetica", 9),
-                               foreground='black')
-        installer_text.pack(side='left')
-        
-        direct_link = ttk.Label(installer_frame,
-                               text="tesseract-ocr-w64-setup-5.5.0.20241111.exe",
-                               font=("Helvetica", 9),
+        direct_link = ttk.Label(download_row,
+                               text="Direct link to Tesseract Windows installer v.5.5.0",
+                               font=("Helvetica", 10),
                                foreground='blue',
                                cursor='hand2')
-        direct_link.pack(side='left', padx=(5, 0))
+        direct_link.pack(side='left')
         direct_link.bind("<Button-1>", lambda e: open_url("https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe"))
-        direct_link.bind("<Enter>", lambda e: direct_link.configure(font=("Helvetica", 9, "underline")))
-        direct_link.bind("<Leave>", lambda e: direct_link.configure(font=("Helvetica", 9)))
+        direct_link.bind("<Enter>", lambda e: direct_link.configure(font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】underline")))
+        direct_link.bind("<Leave>", lambda e: direct_link.configure(font=("Helvetica", 10)))
         
         # Add NaturalVoiceSAPIAdapter information with reduced spacing
         
-        # NaturalVoiceSAPIAdapter section - improved formatting
+        # NaturalVoiceSAPIAdapter section
         natural_voice_frame = ttk.Frame(tesseract_status_frame)
-        natural_voice_frame.pack(anchor='w', pady=(20, 0))
-        
-        natural_voice_title = ttk.Label(
-            natural_voice_frame,
-            text="More Voice Options:",
-            font=("Helvetica", 11, "bold"),
-            foreground='black',
-            wraplength=text_wraplength,
-            justify='left'
-        )
-        natural_voice_title.pack(anchor='w', pady=(0, 5))
+        natural_voice_frame.pack(anchor='w', pady=(25, 0))
         
         natural_voice_label = ttk.Label(
             natural_voice_frame,
-            text="NaturalVoiceSAPIAdapter by gexgd0419",
-            font=("Helvetica", 9),
-            foreground='black',
-            wraplength=text_wraplength,
-            justify='left'
-        )
-        natural_voice_label.pack(anchor='w', pady=(0, 5))
-        
-        # Download text and link - on the same line
-        download_frame = ttk.Frame(natural_voice_frame)
-        download_frame.pack(anchor='w', pady=(0, 5), fill='x')
-        
-        download_text_label = ttk.Label(
-            download_frame,
-            text="Download can be found here:",
-            font=("Helvetica", 9),
+            text="For more and higher-quality voices: (Online voices may take a moment to load when first activated)",
+            font=("Helvetica", 12, "​【𝟯𝟬 𝗰𝗺】bold"),
             foreground='black'
         )
-        download_text_label.pack(side='left')
+        natural_voice_label.pack(anchor='w')
         
+        # Create a frame for the text and link to be on the same line
+        text_link_frame = ttk.Frame(natural_voice_frame)
+        text_link_frame.pack(anchor='w')
+        
+        natural_voice_desc = ttk.Label(
+            text_link_frame,
+            text="Download and install NaturalVoiceSAPIAdapter by gexgd0419 here: ",
+            font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),
+            foreground='black'
+        )
+        natural_voice_desc.pack(side='left')
+        
+        # Clickable link to NaturalVoiceSAPIAdapter
         natural_voice_link = ttk.Label(
-            download_frame,
-            text="https://github.com/gexgd0419/NaturalVoiceSAPIAdapter/releases",
-            font=("Helvetica", 9),
+            text_link_frame,
+            text="https://github.com/gexgd0419/NaturalVoiceSAPIAdapter",
+            font=("Helvetica", 10),
             foreground='blue',
-            cursor='hand2'
+            cursor='hand2'​【𝟲𝟭 𝗰𝗺】
         )
-        natural_voice_link.pack(side='left', padx=(5, 0))
-        natural_voice_link.bind("<Button-1>", lambda e: open_url("https://github.com/gexgd0419/NaturalVoiceSAPIAdapter/releases"))
-        natural_voice_link.bind("<Enter>", lambda e: natural_voice_link.configure(font=("Helvetica", 9, "underline")))
-        natural_voice_link.bind("<Leave>", lambda e: natural_voice_link.configure(font=("Helvetica", 9)))
+        natural_voice_link.pack(side='left')
+        natural_voice_link.bind("<Button-1>", lambda e: open_url("https://github.com/gexgd0419/NaturalVoiceSAPIAdapter?tab=readme-ov-file#installation"))
+        natural_voice_link.bind("<Enter>", lambda e: natural_voice_link.configure(font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】underline")))
+        natural_voice_link.bind("<Leave>", lambda e: natural_voice_link.configure(font=("Helvetica", 10)))
         
-        natural_voice_note = ttk.Label(
-            natural_voice_frame,
-            text="Note! Online voices may take a moment to load when first activated.",
-            font=("Helvetica", 9),
-            foreground='black',
-            wraplength=text_wraplength,
-            justify='left'
-        )
-        natural_voice_note.pack(anchor='w', pady=(0, 0))
-        
-        # "News / Updates:" section (moved into tesseract_status_frame to start higher, alongside banners)
-        update_section_frame = ttk.Frame(tesseract_status_frame)
-        update_section_frame.pack(anchor='w', pady=(5, 0), fill='x')
-        # Don't lift tesseract_status_frame - it would hide the banner container
-        # The banner container should be visible above the text
-        
-        # Title - will be updated when changelog is displayed
-        update_title = ttk.Label(
-            update_section_frame,
-            text="News / Updates:",
-            font=("Helvetica", 11, "bold"),
-            foreground='black',
-            wraplength=text_wraplength,
-            justify='left'
-        )
-        # Add extra top spacing from the note above
-        update_title.pack(anchor='w', pady=(40, 10))
-        
-        # Share checkboxes and Check for Updates button
-        update_controls_frame = ttk.Frame(update_section_frame)
-        update_controls_frame.pack(anchor='w', fill='x', pady=(0, 10))
-        
-        # Check for Updates button - moved before Share checkboxes
-        def on_check_updates():
-            local_version = APP_VERSION
-            # Use force=True to always show result (even if no update, or on error)
-            # Store update_title reference on changelog_text_widget for access in callback
-            changelog_text_widget._update_title = update_title
-            threading.Thread(target=lambda: self.check_and_save_update(local_version, changelog_text_widget), daemon=True).start()
-        
-        check_updates_button = ttk.Button(update_controls_frame, 
-                                         text="Check for Updates",
-                                         command=on_check_updates)
-        check_updates_button.pack(side='left', padx=(0, 10))
-        
-        # Download button (will be shown/hidden based on update availability)
-        def open_download_url():
-            import webbrowser
-            import sys
-            current_module = sys.modules[__name__]
-            GITHUB_REPO = getattr(current_module, 'GITHUB_REPO', '')
-            download_url = getattr(changelog_text_widget, '_download_url', None)
-            url = download_url or f'https://github.com/{GITHUB_REPO}/releases'
-            webbrowser.open(url)
-        
-        download_button = ttk.Button(update_controls_frame,
-                                     text="Open Download page",
-                                     command=open_download_url)
-        
-        # Notification label to show update check status
-        status_label = ttk.Label(update_controls_frame,
-                                 text="",
-                                 foreground="gray")
-        # Pack status label first to establish its position
-        status_label.pack(side='left', padx=(10, 0))
-        
-        # Pack download button before status label, then hide it
-        # This establishes the correct order: Check -> Download -> Status
-        download_button.pack(side='left', padx=(0, 10), before=status_label)
-        download_button.pack_forget()  # Initially hidden, will be shown when update is available
-        
-        # Right side frame for icon, button, and banners (icon_and_banners_container was moved to status_container above)
-        right_side_frame = ttk.Frame(icon_and_banners_container)
-        right_side_frame.pack(side='top', fill='y')
-        
-        # Create icon if icon data is available (centered relative to banners)
-        if hasattr(info_window, '_icon_data'):
-            icon_data = info_window._icon_data
-            icon_canvas = tk.Canvas(
-                right_side_frame,
-                width=icon_data['cw'],
-                height=icon_data['ch'],
-                highlightthickness=0,
-                bd=0,
-                cursor='hand2',
-                takefocus=1
-            )
-            icon_canvas.pack(side='top', pady=(0, 5))
-            icon_img_id = icon_canvas.create_image(icon_data['cw'] // 2, icon_data['ch'] // 2, image=icon_data['photo'])
-            icon_canvas._was_hovered = False
-            icon_canvas._is_hovered = False
-            
-            # Icon animation functions
-            def animate_icon_to_hover():
-                duration_ms = 100
-                steps = 12
-                if hasattr(info_window, '_cancel_anim'):
-                    info_window._cancel_anim(icon_canvas)
-                frames = []
-                
-                def step(i):
-                    t = i / steps
-                    scale = 1.0 + (icon_data['hover_scale'] - 1.0) * t
-                    w = max(1, int(icon_data['size'] * scale))
-                    h = max(1, int(icon_data['size'] * scale))
-                    frame_img = icon_data['pil'].copy()
-                    frame_img.thumbnail((w, h), Image.LANCZOS)
-                    frame = ImageTk.PhotoImage(frame_img)
-                    frames.append(frame)
-                    icon_canvas.itemconfig(icon_img_id, image=frame)
-                    if i < steps:
-                        icon_canvas._anim_job = icon_canvas.after(int(duration_ms / steps), lambda: step(i + 1))
-                    else:
-                        icon_canvas._anim_job = None
-                        icon_canvas._anim_frames = frames
-                
-                step(0)
-            
-            def animate_icon_to_normal():
-                duration_ms = 230
-                steps = 15
-                if hasattr(info_window, '_cancel_anim'):
-                    info_window._cancel_anim(icon_canvas)
-                frames = []
-                
-                def step(i):
-                    t = i / steps
-                    scale = icon_data['hover_scale'] + (1.0 - icon_data['hover_scale']) * t
-                    w = max(1, int(icon_data['size'] * scale))
-                    h = max(1, int(icon_data['size'] * scale))
-                    frame_img = icon_data['pil'].copy()
-                    frame_img.thumbnail((w, h), Image.LANCZOS)
-                    frame = ImageTk.PhotoImage(frame_img)
-                    frames.append(frame)
-                    icon_canvas.itemconfig(icon_img_id, image=frame)
-                    if i < steps:
-                        icon_canvas._anim_job = icon_canvas.after(int(duration_ms / steps), lambda: step(i + 1))
-                    else:
-                        icon_canvas._anim_job = None
-                        icon_canvas._anim_frames = frames
-                
-                step(0)
-            
-            def icon_click_start(e):
-                icon_canvas._was_hovered = getattr(icon_canvas, '_is_hovered', False)
-                if hasattr(info_window, '_cancel_anim'):
-                    info_window._cancel_anim(icon_canvas)
-                normal_img = icon_data['pil'].copy()
-                normal_img.thumbnail((icon_data['size'], icon_data['size']), Image.LANCZOS)
-                normal_photo = ImageTk.PhotoImage(normal_img)
-                icon_canvas.itemconfig(icon_img_id, image=normal_photo)
-                icon_canvas._click_photo = normal_photo
-            
-            def icon_click_end(e):
-                if icon_canvas._was_hovered:
-                    animate_icon_to_hover()
-                on_how_to_use()
-            
-            icon_canvas.bind("<ButtonPress-1>", icon_click_start)
-            icon_canvas.bind("<ButtonRelease-1>", icon_click_end)
-            icon_canvas.bind("<Enter>", lambda e: (setattr(icon_canvas, '_is_hovered', True), animate_icon_to_hover()))
-            icon_canvas.bind("<Leave>", lambda e: (setattr(icon_canvas, '_is_hovered', False), animate_icon_to_normal()))
-        
-        # How to use button - positioned below icon
-        def on_how_to_use():
-            self.show_how_to_use()
-        
-        how_to_use_button = ttk.Button(right_side_frame, 
-                                      text="How to use the program",
-                                      command=on_how_to_use)
-        # Add extra bottom padding to separate the button from the first banner
-        how_to_use_button.pack(side='top', pady=(0, 30))
-        
-        # Banners frame (will be populated below)
-        info_window.banners_frame = ttk.Frame(right_side_frame)
-        info_window.banners_frame.pack(side='top')
-        
-        # Create banners if image data is available
-        if hasattr(info_window, '_coffee_data'):
-            base_scale = info_window._base_scale
-            hover_scale = info_window._hover_scale
-            animate_to_hover = info_window._animate_to_hover
-            animate_to_normal = info_window._animate_to_normal
-            _cancel_anim = info_window._cancel_anim
-            
-            # Coffee banner
-            coffee_data = info_window._coffee_data
-            coffee_canvas = tk.Canvas(
-                info_window.banners_frame,
-                width=coffee_data['cw'],
-                height=coffee_data['ch'],
-                highlightthickness=0,
-                bd=0,
-                cursor='hand2',
-                takefocus=1
-            )
-            coffee_canvas.pack(side='top', padx=10, pady=(0, 15))
-            coffee_img_id = coffee_canvas.create_image(coffee_data['cw'] // 2, coffee_data['ch'] // 2, image=coffee_data['photo'])
-            coffee_canvas._was_hovered = False
-            
-            def coffee_click_start(e):
-                coffee_canvas._was_hovered = getattr(coffee_canvas, '_is_hovered', False)
-                _cancel_anim(coffee_canvas)
-                w, h = coffee_data['pil'].size
-                w_norm = max(1, int(w * base_scale))
-                h_norm = max(1, int(h * base_scale))
-                normal_photo = ImageTk.PhotoImage(coffee_data['pil'].resize((w_norm, h_norm), Image.LANCZOS))
-                coffee_canvas.itemconfig(coffee_img_id, image=normal_photo)
-                coffee_canvas._click_photo = normal_photo
-            
-            def coffee_click_end(e):
-                if coffee_canvas._was_hovered:
-                    animate_to_hover(coffee_canvas, coffee_img_id, coffee_data['pil'])
-                open_url("https://buymeacoffee.com/mertennor")
-            
-            coffee_canvas.bind("<ButtonPress-1>", coffee_click_start)
-            coffee_canvas.bind("<ButtonRelease-1>", coffee_click_end)
-            coffee_canvas.bind("<Enter>", lambda e, c=coffee_canvas, iid=coffee_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, coffee_data['pil'])))
-            coffee_canvas.bind("<Leave>", lambda e, c=coffee_canvas, iid=coffee_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, coffee_data['pil'])))
-            
-            # Google Form banner
-            google_data = info_window._google_data
-            google_canvas = tk.Canvas(
-                info_window.banners_frame,
-                width=google_data['cw'],
-                height=google_data['ch'],
-                highlightthickness=0,
-                bd=0,
-                cursor='hand2',
-                takefocus=1
-            )
-            google_canvas.pack(side='top', padx=10, pady=(0, 15))
-            google_img_id = google_canvas.create_image(google_data['cw'] // 2, google_data['ch'] // 2, image=google_data['photo'])
-            google_canvas._was_hovered = False
-            
-            def google_click_start(e):
-                google_canvas._was_hovered = getattr(google_canvas, '_is_hovered', False)
-                _cancel_anim(google_canvas)
-                w, h = google_data['pil'].size
-                w_norm = max(1, int(w * base_scale))
-                h_norm = max(1, int(h * base_scale))
-                normal_photo = ImageTk.PhotoImage(google_data['pil'].resize((w_norm, h_norm), Image.LANCZOS))
-                google_canvas.itemconfig(google_img_id, image=normal_photo)
-                google_canvas._click_photo = normal_photo
-            
-            def google_click_end(e):
-                if google_canvas._was_hovered:
-                    animate_to_hover(google_canvas, google_img_id, google_data['pil'])
-                open_url("https://forms.gle/8YBU8atkgwjyzdM79")
-            
-            google_canvas.bind("<ButtonPress-1>", google_click_start)
-            google_canvas.bind("<ButtonRelease-1>", google_click_end)
-            google_canvas.bind("<Enter>", lambda e, c=google_canvas, iid=google_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, google_data['pil'])))
-            google_canvas.bind("<Leave>", lambda e, c=google_canvas, iid=google_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, google_data['pil'])))
-            
-            # GitHub banner
-            github_data = info_window._github_data
-            github_canvas = tk.Canvas(
-                info_window.banners_frame,
-                width=github_data['cw'],
-                height=github_data['ch'],
-                highlightthickness=0,
-                bd=0,
-                cursor='hand2',
-                takefocus=1
-            )
-            github_canvas.pack(side='top', padx=10, pady=(0, 15))
-            github_img_id = github_canvas.create_image(github_data['cw'] // 2, github_data['ch'] // 2, image=github_data['photo'])
-            github_canvas._was_hovered = False
-            
-            def github_click_start(e):
-                github_canvas._was_hovered = getattr(github_canvas, '_is_hovered', False)
-                _cancel_anim(github_canvas)
-                w, h = github_data['pil'].size
-                w_norm = max(1, int(w * base_scale))
-                h_norm = max(1, int(h * base_scale))
-                normal_photo = ImageTk.PhotoImage(github_data['pil'].resize((w_norm, h_norm), Image.LANCZOS))
-                github_canvas.itemconfig(github_img_id, image=normal_photo)
-                github_canvas._click_photo = normal_photo
-            
-            def github_click_end(e):
-                if github_canvas._was_hovered:
-                    animate_to_hover(github_canvas, github_img_id, github_data['pil'])
-                open_url(f"https://github.com/{GITHUB_REPO}")
-            
-            github_canvas.bind("<ButtonPress-1>", github_click_start)
-            github_canvas.bind("<ButtonRelease-1>", github_click_end)
-            github_canvas.bind("<Enter>", lambda e, c=github_canvas, iid=github_img_id: (setattr(c, '_is_hovered', True), animate_to_hover(c, iid, github_data['pil'])))
-            github_canvas.bind("<Leave>", lambda e, c=github_canvas, iid=github_img_id: (setattr(c, '_is_hovered', False), animate_to_normal(c, iid, github_data['pil'])))
-            
-            # Update container height to match content (cut off after last banner)
-            info_window.update_idletasks()
-            # Get the height of right_side_frame which contains all banners (icon, button, banners)
-            if hasattr(info_window, 'banners_frame') and hasattr(info_window, 'icon_and_banners_container'):
-                right_side_frame.update_idletasks()
-                container_height = right_side_frame.winfo_reqheight()
-                # Trim the visible height slightly so the container cuts off sooner
-                trim_pixels = 0  # adjust this value to show more/less of the banners
-                if container_height > 0:
-                    icon_and_banners_container.place_configure(
-                        height=max(1, container_height - trim_pixels)
-                    )
-        
-        # Changelog scrollable text widget
-        changelog_frame = ttk.Frame(update_section_frame)
-        changelog_frame.pack(anchor='w', fill='both', expand=True, pady=(0, 0))
-        # Note: Z-order is handled by lifting the parent tesseract_status_frame above icon_and_banners_container
-        # (done earlier in the code after update_section_frame is created)
-        
-        changelog_scrollbar = ttk.Scrollbar(changelog_frame)
-        changelog_scrollbar.pack(side='right', fill='y')
-        
-        changelog_text_widget = tk.Text(changelog_frame, 
-                                        wrap=tk.WORD, 
-                                        yscrollcommand=changelog_scrollbar.set,
-                                        font=("Helvetica", 9),
-                                        padx=8,
-                                        pady=6,
-                                        height=15,
-                                        background='#f5f5f5',
-                                        border=1,
-                                        state='disabled',
-                                        cursor='xterm',
-                                        selectbackground='#0078d7',
-                                        selectforeground='white')
-        changelog_text_widget.pack(fill='both', expand=True)
-        changelog_scrollbar.config(command=changelog_text_widget.yview)
-        
-        # Store update_title, download_button, and status_label references on changelog_text_widget for later access
-        changelog_text_widget._update_title = update_title
-        changelog_text_widget._download_button = download_button
-        changelog_text_widget._status_label = status_label
-        
-        # Load and display saved update info
-        update_info = self.load_update_info()
-        if update_info and isinstance(update_info, dict):
-            download_url = update_info.get('download_url')
-            # Store download_url on widget for button access
-            changelog_text_widget._download_url = download_url
-            self.display_changelog(changelog_text_widget, update_info.get('changelog', ''), update_info.get('version', ''), update_info.get('update_available', False), update_title, download_url)
-        else:
-            changelog_text_widget.config(state='normal')
-            changelog_text_widget.insert('1.0', "You haven't checked for any update yet...")
-            changelog_text_widget.config(state='disabled')
-        
-        # Add bottom frame for close button with padding
-        bottom_frame = ttk.Frame(main_frame)
-        bottom_frame.pack(fill='x', pady=(20, 0))
-        
-
-        
-        # Center window on screen
-        info_window.update_idletasks()
-        width = info_window.winfo_width()
-        height = info_window.winfo_height()
-        x = (info_window.winfo_screenwidth() // 2) - (width // 2)
-        y = (info_window.winfo_screenheight() // 2) - (height // 2)
-        info_window.geometry(f'{width}x{height}+{x}+{y}')
-        
-        # Make window modal
-        info_window.transient(self.root)
-        info_window.grab_set()
-    
-    def show_how_to_use(self):
-        # Create Tkinter window for How to Use content
-        how_to_use_window = tk.Toplevel(self.root)
-        how_to_use_window.title(f"{APP_NAME} - How to Use")
-        how_to_use_window.geometry("900x700")
-        
-        # Set window icon if available
-        try:
-            icon_path = os.path.join(os.path.dirname(__file__), 'Assets', 'icon.ico')
-            if os.path.exists(icon_path):
-                how_to_use_window.iconbitmap(icon_path)
-        except Exception as e:
-            print(f"Error setting how to use window icon: {e}")
-        
-        # Main container
-        main_frame = ttk.Frame(how_to_use_window, padding="15 10 15 5")
-        main_frame.pack(fill='both', expand=True)
-        
-        # Top-left title label (no surrounding frame)
-        title_label = ttk.Label(
-            main_frame,
-            text=f"How to Use {APP_NAME}",
-            font=("Helvetica", 16, "bold")
-        )
-        title_label.pack(anchor='w', pady=(0, 10))
+        tesseract_frame = ttk.Frame(credits_frame)
+        tesseract_frame.pack(fill='x', pady=(5, 0))
         
         # Create a frame with scrollbar for the main content
         content_frame = ttk.Frame(main_frame)
@@ -7420,8 +5515,8 @@ class GameTextReader:
         # Add fullscreen hotkey warning above the text widget
         warning_label = ttk.Label(
             content_frame,
-            text=f"Tip: \n - If hotkeys don't work in fullscreen apps or games, run {APP_NAME} as Administrator.\n",
-            font=("Helvetica", 10, "bold"),
+            text="Tip: \n - If hotkeys don't work in fullscreen apps or games, run GameReader as Administrator.\n",
+            font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),
             foreground='black'
         )
         warning_label.pack(anchor='w', pady=(3, 0))
@@ -7439,18 +5534,18 @@ class GameTextReader:
                              pady=6,
                              spacing1=2,  # Space between lines
                              spacing2=2,  # Space between paragraphs
-                             background='#f5f5f5',  # Light gray background
+                             background='#f5f5f5'​【𝟭,𝟱 𝗺】,  # Light gray background
                              border=1,
                              state='normal',  # Make it editable initially to insert text
                              cursor='xterm',  # Show text cursor
-                             selectbackground='#0078d7',  # Blue selection color
+                             selectbackground='#0078d7'​【𝟮,𝟭 𝗺】,  # Blue selection color
                              selectforeground='white')  # White text on selection
         
         # Add right-click context menu for copy
         def show_context_menu(event):
             context_menu = tk.Menu(text_widget, tearoff=0)
             context_menu.add_command(label="Copy", command=lambda: text_widget.event_generate('<<Copy>>'))
-            context_menu.add_command(label="Select All", command=lambda: text_widget.tag_add('sel', '1.0', 'end'))
+            context_menu.add_command(label="Select All", command=lambda: text_widget.tag_add('sel', '1.0'​【𝟯𝟬 𝗰𝗺】, 'end'))
             try:
                 context_menu.tk.call('tk_popup', context_menu, event.x_root, event.y_root)
             finally:
@@ -7462,7 +5557,7 @@ class GameTextReader:
         
         # Configure scrollbar and tags
         scrollbar.config(command=text_widget.yview)
-        text_widget.tag_configure('bold', font=("Helvetica", 10, "bold"))
+        text_widget.tag_configure('bold', font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"))
         
         # Info text with improved formatting - split into sections
         info_text = [
@@ -7580,25 +5675,33 @@ class GameTextReader:
             
         text_widget.bind('<Key>', enable_text_selection)
         text_widget.bind('<Control-c>', lambda e: text_widget.event_generate('<<Copy>>') or 'break')
-        text_widget.bind('<Control-a>', lambda e: (text_widget.tag_add('sel', '1.0', 'end'), 'break'))
+        text_widget.bind('<Control-a>', lambda e: (text_widget.tag_add('sel', '1.0'​【𝟯𝟬 𝗰𝗺】, 'end'), 'break'))
         
         # Make text widget read-only but keep text selectable
         text_widget.config(state='disabled')
         
-        # Bind Escape key to close
-        how_to_use_window.bind('<Escape>', lambda e: how_to_use_window.destroy())
+        # Add bottom frame for close button with padding
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill='x', pady=(20, 0))
+        
+        # Add close button
+        close_button = ttk.Button(bottom_frame, 
+                                 text="Wait.. what is this button doing here?", 
+                                 command=info_window.destroy,
+                                 width=45)
+        close_button.pack(side='right')
         
         # Center window on screen
-        how_to_use_window.update_idletasks()
-        width = how_to_use_window.winfo_width()
-        height = how_to_use_window.winfo_height()
-        x = (how_to_use_window.winfo_screenwidth() // 2) - (width // 2)
-        y = (how_to_use_window.winfo_screenheight() // 2) - (height // 2)
-        how_to_use_window.geometry(f'{width}x{height}+{x}+{y}')
+        info_window.update_idletasks()
+        width = info_window.winfo_width()
+        height = info_window.winfo_height()
+        x = (info_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (info_window.winfo_screenheight() // 2) - (height // 2)
+        info_window.geometry(f'{width}x{height}+{x}+{y}')
         
         # Make window modal
-        how_to_use_window.transient(self.root)
-        how_to_use_window.grab_set()
+        info_window.transient(self.root)
+        info_window.grab_set()
         
     def test_hotkey_working(self, hotkey_str):
         """Test if a hotkey is working properly"""
@@ -7714,8 +5817,8 @@ class GameTextReader:
             # Final validation: Check if this is a mouse button (button1 or button2) and validate against checkbox
             # Check if hk_str is exactly button1/button2, or contains them as part of a combination
             # Be explicit: check for exact matches first, then substring matches
-            is_left_button = hk_str == 'button1' or hk_str.startswith('button1+') or hk_str.endswith('+button1') or '+button1+' in hk_str
-            is_right_button = hk_str == 'button2' or hk_str.startswith('button2+') or hk_str.endswith('+button2') or '+button2+' in hk_str
+            is_left_button = hk_str == 'button1'​【𝟯𝟬 𝗰𝗺】 or hk_str.startswith('button1+') or hk_str.endswith('+button1') or '+button1+' in hk_str
+            is_right_button = hk_str == 'button2'​【𝟲𝟭 𝗰𝗺】 or hk_str.startswith('button2+') or hk_str.endswith('+button2') or '+button2+' in hk_str
             is_mouse_button = is_left_button or is_right_button
             
             if is_mouse_button:
@@ -7781,7 +5884,7 @@ class GameTextReader:
                     print(f"Error cleaning up stop hotkey hooks: {e}")
             self.stop_hotkey = hk_str
             self._set_unsaved_changes('hotkey_changed', 'Stop Hotkey')  # Mark as unsaved when stop hotkey changes
-            # Save to settings file (APP_SETTINGS_PATH)
+            # Save to gamereader_settings.json
             self._save_stop_hotkey(hk_str)
             # Register
             mock_button = type('MockButton', (), {'hotkey': hk_str, 'is_stop_button': True})
@@ -7863,7 +5966,7 @@ class GameTextReader:
                     is_arrow_by_name = raw_name in arrow_key_names
                     
                     # Check if event name indicates numpad (starts with "numpad " or is a number)
-                    is_numpad_by_name = raw_name.startswith('numpad ') or (raw_name in ['2', '4', '6', '8'] and not is_arrow_by_name)
+                    is_numpad_by_name = raw_name.startswith('numpad ') or (raw_name in ['2'​【𝟲𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '8']​【𝟮,𝟰𝟰 𝗺】 and not is_arrow_by_name)
                     
                     if is_arrow_by_name:
                         # Event name clearly indicates arrow key - use that regardless of NumLock
@@ -7930,7 +6033,7 @@ class GameTextReader:
                     else:
                         name = raw_name
                 # Then check if this is a numpad key by event name
-                elif raw_name.startswith('numpad ') or raw_name in ['numpad 0', 'numpad 1', 'numpad 2', 'numpad 3', 'numpad 4', 'numpad 5', 'numpad 6', 'numpad 7', 'numpad 8', 'numpad 9', 'numpad *', 'numpad +', 'numpad -', 'numpad .', 'numpad /', 'numpad enter']:
+                elif raw_name.startswith('numpad ') or raw_name in ['numpad 0', 'numpad 1'​【𝟯𝟬 𝗰𝗺】, 'numpad 2'​【𝟲𝟭 𝗰𝗺】, 'numpad 3'​【𝟵𝟭 𝗰𝗺】, 'numpad 4'​【𝟭,𝟮𝟮 𝗺】, 'numpad 5'​【𝟭,𝟱 𝗺】, 'numpad 6'​【𝟭,𝟴𝟯 𝗺】, 'numpad 7'​【𝟮,𝟭 𝗺】, 'numpad 8'​【𝟮,𝟰𝟰 𝗺】, 'numpad 9'​【𝟮,𝟳 𝗺】, 'numpad *', 'numpad +', 'numpad -', 'numpad .', 'numpad /', 'numpad enter']:
                     # Convert numpad event name to our format
                     if raw_name == 'numpad *':
                         name = 'num_multiply'
@@ -7949,7 +6052,7 @@ class GameTextReader:
                         num = raw_name.replace('numpad ', '')
                         name = f"num_{num}"
                 # Then check special keys by event name
-                elif raw_name in ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
+                elif raw_name in ['f1'​【𝟯𝟬 𝗰𝗺】, 'f2'​【𝟲𝟭 𝗰𝗺】, 'f3'​【𝟵𝟭 𝗰𝗺】, 'f4'​【𝟭,𝟮𝟮 𝗺】, 'f5'​【𝟭,𝟱 𝗺】, 'f6'​【𝟭,𝟴𝟯 𝗺】, 'f7'​【𝟮,𝟭 𝗺】, 'f8'​【𝟮,𝟰𝟰 𝗺】, 'f9'​【𝟮,𝟳 𝗺】, 'f10'​【𝟯 𝗺】, 'f11'​【𝟯,𝟰 𝗺】, 'f12'​【𝟯,𝟳 𝗺】,
                                  'num lock', 'scroll lock', 'insert', 'home', 'end', 'page up', 'page down',
                                  'delete', 'tab', 'enter', 'backspace', 'space', 'escape']:
                     name = raw_name
@@ -8020,7 +6123,7 @@ class GameTextReader:
             
             # Check if this is a mouse button (button1 or button2) and validate against checkbox
             # Check if base_key is button1 or button2, or contains them (for combinations)
-            is_mouse_button = base_key in ['button1', 'button2'] or 'button1' in base_key or 'button2' in base_key
+            is_mouse_button = base_key in ['button1'​【𝟯𝟬 𝗰𝗺】, 'button2']​【𝟲𝟭 𝗰𝗺】 or 'button1'​【𝟯𝟬 𝗰𝗺】 in base_key or 'button2'​【𝟲𝟭 𝗰𝗺】 in base_key
             if is_mouse_button:
                 # Get the current state of the allow_mouse_buttons checkbox
                 allow_mouse_buttons = False
@@ -8059,8 +6162,8 @@ class GameTextReader:
             button_identifier = event.button
             
             # Check if this is a left or right mouse button (same logic as set_hotkey)
-            is_left_button = button_identifier == 1 or str(button_identifier).lower() in ['left', 'primary', 'select', 'action', 'button1', 'mouse1']
-            is_right_button = button_identifier == 2 or str(button_identifier).lower() in ['right', 'secondary', 'context', 'alternate', 'button2', 'mouse2']
+            is_left_button = button_identifier == 1 or str(button_identifier).lower() in ['left', 'primary', 'select', 'action', 'button1'​【𝟯𝟬 𝗰𝗺】, 'mouse1']​【𝟯𝟬 𝗰𝗺】
+            is_right_button = button_identifier == 2 or str(button_identifier).lower() in ['right', 'secondary', 'context', 'alternate', 'button2'​【𝟲𝟭 𝗰𝗺】, 'mouse2']​【𝟲𝟭 𝗰𝗺】
             
             # Check if this is a left/right mouse button
             if is_left_button or is_right_button:
@@ -8120,7 +6223,7 @@ class GameTextReader:
                 
                 self.stop_hotkey = key_name
                 self._set_unsaved_changes('hotkey_changed', 'Stop Hotkey')  # Mark as unsaved when stop hotkey changes
-                # Save to settings file (APP_SETTINGS_PATH)
+                # Save to gamereader_settings.json
                 self._save_stop_hotkey(key_name)
                 
                 # Create a mock button object to use with setup_hotkey
@@ -8373,8 +6476,8 @@ class GameTextReader:
 
         def _assign_pause_hotkey_and_register(hk_str):
             # Final validation: Check if this is a mouse button (button1 or button2) and validate against checkbox
-            is_left_button = hk_str == 'button1' or hk_str.startswith('button1+') or hk_str.endswith('+button1') or '+button1+' in hk_str
-            is_right_button = hk_str == 'button2' or hk_str.startswith('button2+') or hk_str.endswith('+button2') or '+button2+' in hk_str
+            is_left_button = hk_str == 'button1'​【𝟯𝟬 𝗰𝗺】 or hk_str.startswith('button1+') or hk_str.endswith('+button1') or '+button1+' in hk_str
+            is_right_button = hk_str == 'button2'​【𝟲𝟭 𝗰𝗺】 or hk_str.startswith('button2+') or hk_str.endswith('+button2') or '+button2+' in hk_str
             is_mouse_button = is_left_button or is_right_button
             
             if is_mouse_button:
@@ -8436,7 +6539,7 @@ class GameTextReader:
                     print(f"Error cleaning up pause hotkey hooks: {e}")
             self.pause_hotkey = hk_str
             self._set_unsaved_changes('hotkey_changed', 'Pause/Play Hotkey')  # Mark as unsaved when pause hotkey changes
-            # Save to settings file (APP_SETTINGS_PATH)
+            # Save to gamereader_settings.json
             self._save_pause_hotkey(hk_str)
             # Register
             mock_button = type('MockButton', (), {'hotkey': hk_str, 'is_pause_button': True})
@@ -8553,7 +6656,7 @@ class GameTextReader:
             base_key = name
             
             # Check if this is a mouse button
-            is_mouse_button = base_key in ['button1', 'button2'] or 'button1' in base_key or 'button2' in base_key
+            is_mouse_button = base_key in ['button1'​【𝟯𝟬 𝗰𝗺】, 'button2']​【𝟲𝟭 𝗰𝗺】 or 'button1'​【𝟯𝟬 𝗰𝗺】 in base_key or 'button2'​【𝟲𝟭 𝗰𝗺】 in base_key
             if is_mouse_button:
                 allow_mouse_buttons = False
                 if hasattr(self, 'allow_mouse_buttons_var'):
@@ -8586,8 +6689,8 @@ class GameTextReader:
                 return
             
             button_identifier = event.button
-            is_left_button = button_identifier == 1 or str(button_identifier).lower() in ['left', 'primary', 'select', 'action', 'button1', 'mouse1']
-            is_right_button = button_identifier == 2 or str(button_identifier).lower() in ['right', 'secondary', 'context', 'alternate', 'button2', 'mouse2']
+            is_left_button = button_identifier == 1 or str(button_identifier).lower() in ['left', 'primary', 'select', 'action', 'button1'​【𝟯𝟬 𝗰𝗺】, 'mouse1']​【𝟯𝟬 𝗰𝗺】
+            is_right_button = button_identifier == 2 or str(button_identifier).lower() in ['right', 'secondary', 'context', 'alternate', 'button2'​【𝟲𝟭 𝗰𝗺】, 'mouse2']​【𝟲𝟭 𝗰𝗺】
             
             if is_left_button or is_right_button:
                 allow_mouse_buttons = False
@@ -8788,7 +6891,7 @@ class GameTextReader:
                     
                     self.stop_hotkey = key_name
                     self._set_unsaved_changes('hotkey_changed', 'Stop Hotkey')  # Mark as unsaved when stop hotkey changes
-                    # Save to settings file (APP_SETTINGS_PATH)
+                    # Save to gamereader_settings.json
                     self._save_stop_hotkey(key_name)
                     
                     # Create a mock button object to use with setup_hotkey
@@ -8897,12 +7000,12 @@ class GameTextReader:
                     pass
 
         def _save_edit_area_hotkey(hk_str):
-            """Save edit area hotkey to the settings file"""
+            """Save edit area hotkey to gamereader_settings.json"""
             try:
                 import tempfile, os, json
-                game_reader_dir = APP_DOCUMENTS_DIR
+                game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
                 os.makedirs(game_reader_dir, exist_ok=True)
-                temp_path = APP_SETTINGS_PATH
+                temp_path = os.path.join(game_reader_dir, 'gamereader_settings.json')
                 
                 # Load existing settings or create new ones
                 settings = {}
@@ -8928,7 +7031,7 @@ class GameTextReader:
         def _assign_edit_area_hotkey_and_register(hk_str):
             # Final validation: Check if this is a mouse button (button1 or button2) and validate against checkbox
             # Check if hk_str is exactly button1/button2, or contains them as part of a combination
-            is_mouse_button = hk_str in ['button1', 'button2'] or 'button1' in hk_str or 'button2' in hk_str
+            is_mouse_button = hk_str in ['button1'​【𝟯𝟬 𝗰𝗺】, 'button2']​【𝟲𝟭 𝗰𝗺】 or 'button1'​【𝟯𝟬 𝗰𝗺】 in hk_str or 'button2'​【𝟲𝟭 𝗰𝗺】 in hk_str
             if is_mouse_button:
                 # Get the current state of the allow_mouse_buttons checkbox
                 allow_mouse_buttons = False
@@ -9105,7 +7208,7 @@ class GameTextReader:
             base_key = name
             # Check if this is a mouse button (button1 or button2) and validate against checkbox
             # Check if base_key is button1 or button2, or contains them (for combinations)
-            is_mouse_button = base_key in ['button1', 'button2'] or 'button1' in base_key or 'button2' in base_key
+            is_mouse_button = base_key in ['button1'​【𝟯𝟬 𝗰𝗺】, 'button2']​【𝟲𝟭 𝗰𝗺】 or 'button1'​【𝟯𝟬 𝗰𝗺】 in base_key or 'button2'​【𝟲𝟭 𝗰𝗺】 in base_key
             if is_mouse_button:
                 # Get the current state of the allow_mouse_buttons checkbox
                 allow_mouse_buttons = False
@@ -9279,12 +7382,12 @@ class GameTextReader:
         self.unhook_timer = self.root.after(4000, reset_button)
 
     def _save_repeat_latest_hotkey(self, hotkey):
-        """Save repeat latest hotkey to the settings file"""
+        """Save repeat latest hotkey to gamereader_settings.json"""
         try:
             import tempfile, os, json
-            game_reader_dir = APP_DOCUMENTS_DIR
+            game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
             os.makedirs(game_reader_dir, exist_ok=True)
-            temp_path = APP_SETTINGS_PATH
+            temp_path = os.path.join(game_reader_dir, 'gamereader_settings.json')
             
             # Load existing settings or create new ones
             settings = {}
@@ -9306,12 +7409,12 @@ class GameTextReader:
             print(f"Error saving repeat latest hotkey: {e}")
 
     def _save_pause_hotkey(self, hotkey):
-        """Save pause/play hotkey to the settings file"""
+        """Save pause/play hotkey to gamereader_settings.json"""
         try:
             import tempfile, os, json
-            game_reader_dir = APP_DOCUMENTS_DIR
+            game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
             os.makedirs(game_reader_dir, exist_ok=True)
-            temp_path = APP_SETTINGS_PATH
+            temp_path = os.path.join(game_reader_dir, 'gamereader_settings.json')
             
             # Load existing settings or create new ones
             settings = {}
@@ -9333,12 +7436,12 @@ class GameTextReader:
             print(f"Error saving pause/play hotkey: {e}")
 
     def _save_stop_hotkey(self, hotkey):
-        """Save stop hotkey to the settings file"""
+        """Save stop hotkey to gamereader_settings.json"""
         try:
             import tempfile, os, json
-            game_reader_dir = APP_DOCUMENTS_DIR
+            game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
             os.makedirs(game_reader_dir, exist_ok=True)
-            temp_path = APP_SETTINGS_PATH
+            temp_path = os.path.join(game_reader_dir, 'gamereader_settings.json')
             
             # Load existing settings or create new ones
             settings = {}
@@ -9399,18 +7502,8 @@ class GameTextReader:
         self.root.update_idletasks()
     
     def save_all_auto_read_areas(self):
-        """Save settings for all Auto Read areas to the layout file."""
-        import os
-        
-        # Check if a layout file is loaded
-        current_layout_file = self.layout_file.get()
-        if not current_layout_file or not os.path.exists(current_layout_file):
-            if hasattr(self, 'status_label'):
-                self.status_label.config(text="No layout file loaded - save layout first", fg="orange")
-                if hasattr(self, '_feedback_timer') and self._feedback_timer:
-                    self.root.after_cancel(self._feedback_timer)
-                self._feedback_timer = self.root.after(2000, lambda: self.status_label.config(text=""))
-            return
+        """Save settings for all Auto Read areas to a single JSON file."""
+        import tempfile, os, json
         
         # Find all Auto Read areas
         auto_read_areas = []
@@ -9421,7 +7514,17 @@ class GameTextReader:
                 area_frame, hotkey_button, _, area_name_var, preprocess_var, voice_var, speed_var, psm_var = area[:8]
             area_name = area_name_var.get()
             if area_name.startswith("Auto Read"):
-                auto_read_areas.append(area_name)
+                # Get hotkey for this area
+                hotkey = getattr(hotkey_button, 'hotkey', None)
+                auto_read_areas.append({
+                    'area_name': area_name,
+                    'area_frame': area_frame,
+                    'hotkey': hotkey,
+                    'preprocess_var': preprocess_var,
+                    'voice_var': voice_var,
+                    'speed_var': speed_var,
+                    'psm_var': psm_var,
+                })
         
         if not auto_read_areas:
             if hasattr(self, 'status_label'):
@@ -9431,19 +7534,60 @@ class GameTextReader:
                 self._feedback_timer = self.root.after(2000, lambda: self.status_label.config(text=""))
             return
         
-        # Save to layout file using auto-save
+        # Create GameReader subdirectory in Temp if it doesn't exist
+        game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
+        os.makedirs(game_reader_dir, exist_ok=True)
+        temp_path = os.path.join(game_reader_dir, 'auto_read_settings.json')
+        
+        # Load existing settings to preserve other global settings
+        all_settings = {}
+        if os.path.exists(temp_path):
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    all_settings = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError, IOError, OSError) as e:
+                print(f"Error loading auto-read settings: {e}")
+                all_settings = {}
+        
+        # Initialize areas dictionary if it doesn't exist
+        if 'areas' not in all_settings:
+            all_settings['areas'] = {}
+        
+        # Get interrupt_on_new_scan_var if it exists (only for the first "Auto Read")
+        interrupt_var = getattr(self, 'interrupt_on_new_scan_var', None)
+        if interrupt_var is not None:
+            all_settings['stop_read_on_select'] = interrupt_var.get()
+        
+        # Save settings for each Auto Read area
+        saved_count = 0
+        for area_info in auto_read_areas:
+            area_name = area_info['area_name']
+            
+            # Initialize area settings
+            area_settings = {}
+            
+            # Update with the basic settings
+            voice_to_save = getattr(area_info['voice_var'], '_full_name', area_info['voice_var'].get())
+            area_settings.update({
+                'preprocess': area_info['preprocess_var'].get(),
+                'voice': voice_to_save,
+                'speed': area_info['speed_var'].get(),
+                'hotkey': area_info['hotkey'],
+                'psm': area_info['psm_var'].get(),
+            })
+            
+            # Add image processing settings if they exist
+            if area_name in self.processing_settings:
+                area_settings['processing'] = self.processing_settings[area_name].copy()
+            
+            # Store in the areas dictionary
+            all_settings['areas'][area_name] = area_settings
+            saved_count += 1
+        
+        # Save all settings to the single file
         try:
-            self.save_layout_auto()
-            saved_count = len(auto_read_areas)
-            # Show status message
-            if hasattr(self, 'status_label'):
-                if saved_count > 0:
-                    self.status_label.config(text=f"Saved settings for {saved_count} Auto Read area(s)", fg="black")
-                else:
-                    self.status_label.config(text="Failed to save Auto Read area settings", fg="red")
-                if hasattr(self, '_feedback_timer') and self._feedback_timer:
-                    self.root.after_cancel(self._feedback_timer)
-                self._feedback_timer = self.root.after(2000, lambda: self.status_label.config(text=""))
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(all_settings, f, indent=4)
         except Exception as e:
             print(f"Error saving Auto Read area settings: {e}")
             if hasattr(self, 'status_label'):
@@ -9451,6 +7595,17 @@ class GameTextReader:
                 if hasattr(self, '_feedback_timer') and self._feedback_timer:
                     self.root.after_cancel(self._feedback_timer)
                 self._feedback_timer = self.root.after(2000, lambda: self.status_label.config(text=""))
+            return
+        
+        # Show status message
+        if hasattr(self, 'status_label'):
+            if saved_count > 0:
+                self.status_label.config(text=f"Saved settings for {saved_count} Auto Read area(s)", fg="black")
+            else:
+                self.status_label.config(text="Failed to save Auto Read area settings", fg="red")
+            if hasattr(self, '_feedback_timer') and self._feedback_timer:
+                self.root.after_cancel(self._feedback_timer)
+            self._feedback_timer = self.root.after(2000, lambda: self.status_label.config(text=""))
 
     def validate_numeric_input(self, P, is_speed=False):
         """Validate input to only allow numbers with different limits for speed and volume"""
@@ -11149,7 +9304,7 @@ class GameTextReader:
                 exit_text = canvas.create_text(center_x, top_y + box_height // 2,
                                               text="Press ESC to exit",
                                               fill="white",
-                                              font=("Arial", 14, "bold"),
+                                              font=("Arial", 14, "​【𝟯𝟲 𝗰𝗺】bold"),
                                               tags="exit_message")
                 
                 # Ensure exit message is on top of everything
@@ -11572,13 +9727,13 @@ class GameTextReader:
                         grayed_index += 1
                     
                     area_boxes[area_frame] = {
-                        'x1': x1_canvas, 'y1': y1_canvas, 'x2': x2_canvas, 'y2': y2_canvas,
+                        'x1':​【𝟯𝟬 𝗰𝗺】 x1_canvas, 'y1':​【𝟯𝟬 𝗰𝗺】 y1_canvas, 'x2':​【𝟲𝟭 𝗰𝗺】 x2_canvas, 'y2':​【𝟲𝟭 𝗰𝗺】 y2_canvas,
                         'color': color, 'is_grayed': is_grayed, 'name_var': name_var,
                         'hotkey_button': hotkey_button
                     }
                 
                 box_data = area_boxes[area_frame]
-                x1, y1, x2, y2 = box_data['x1'], box_data['y1'], box_data['x2'], box_data['y2']
+                x1, y1, x2, y2 = box_data['x1']​【𝟯𝟬 𝗰𝗺】, box_data['y1']​【𝟯𝟬 𝗰𝗺】, box_data['x2']​【𝟲𝟭 𝗰𝗺】, box_data['y2']​【𝟲𝟭 𝗰𝗺】
                 color = box_data['color']
                 is_grayed = box_data['is_grayed']
                 
@@ -11624,10 +9779,10 @@ class GameTextReader:
                 
                 # Draw resize handles (for all boxes, not just active ones)
                 handles = [
-                    (x1, y1, "nw"), (x2, y1, "ne"),
-                    (x1, y2, "sw"), (x2, y2, "se"),
-                    ((x1+x2)//2, y1, "n"), ((x1+x2)//2, y2, "s"),
-                    (x1, (y1+y2)//2, "w"), (x2, (y1+y2)//2, "e")
+                    (x1, y1, "​【𝟮,𝟱𝟰 𝗰𝗺】nw"), (x2, y1, "ne"),
+                    (x1, y2, "​【𝟱 𝗰𝗺】sw"), (x2, y2, "se"),
+                    ((x1+x2)//2, y1, "​【𝟮,𝟱𝟰 𝗰𝗺】n"), ((x1+x2)//2, y2, "s"),
+                    (x1, (y1+y2)//2, "​【𝟱 𝗰𝗺】w"), (x2, (y1+y2)//2, "e")
                 ]
                 for hx, hy, handle_type in handles:
                     canvas.create_rectangle(hx-RESIZE_HANDLE_SIZE//2, hy-RESIZE_HANDLE_SIZE//2,
@@ -11665,7 +9820,7 @@ class GameTextReader:
                 canvas.create_text(name_x + 3, name_y,
                                  text=name_text,
                                  fill=text_color,
-                                 font=("Helvetica", 13, "bold"),
+                                 font=("Helvetica", 13, "​【𝟯𝟯 𝗰𝗺】bold"),
                                  anchor="w",
                                  tags=("area_text", f"text_{id(area_frame)}"))
                 
@@ -11722,7 +9877,7 @@ class GameTextReader:
                 canvas.create_text(hotkey_x, hotkey_y,
                                  text=hotkey_text,
                                  fill=text_color,
-                                 font=("Helvetica", 11, "bold"),
+                                 font=("Helvetica", 11, "​【𝟮𝟴 𝗰𝗺】bold"),
                                  anchor="c",
                                  tags=("area_hotkey", f"hotkey_{id(area_frame)}"))
             
@@ -11782,21 +9937,21 @@ class GameTextReader:
                     if area_frame in area_boxes:
                         box_data = area_boxes[area_frame]
                         state['boxes'][area_name] = {
-                            'x1': box_data['x1'],
-                            'y1': box_data['y1'],
-                            'x2': box_data['x2'],
-                            'y2': box_data['y2'],
+                            'x1':​【𝟯𝟬 𝗰𝗺】 box_data['x1']​【𝟯𝟬 𝗰𝗺】,
+                            'y1':​【𝟯𝟬 𝗰𝗺】 box_data['y1']​【𝟯𝟬 𝗰𝗺】,
+                            'x2':​【𝟲𝟭 𝗰𝗺】 box_data['x2']​【𝟲𝟭 𝗰𝗺】,
+                            'y2':​【𝟲𝟭 𝗰𝗺】 box_data['y2']​【𝟲𝟭 𝗰𝗺】,
                             'color': box_data.get('color', '#808080'),
                             'is_grayed': box_data.get('is_grayed', False)
                         }
                     else:
                         # Area exists but hasn't been positioned yet - save with default/zero values
                         state['boxes'][area_name] = {
-                            'x1': 0,
-                            'y1': 0,
-                            'x2': 0,
-                            'y2': 0,
-                            'color': '#808080',
+                            'x1':​【𝟯𝟬 𝗰𝗺】 0,
+                            'y1':​【𝟯𝟬 𝗰𝗺】 0,
+                            'x2':​【𝟲𝟭 𝗰𝗺】 0,
+                            'y2':​【𝟲𝟭 𝗰𝗺】 0,
+                            'color': '#808080'​【𝟮𝟰𝟲 𝗸𝗺】,
                             'is_grayed': False
                         }
             
@@ -11880,8 +10035,8 @@ class GameTextReader:
                     # Ensure area is in area_boxes
                     if area_frame not in area_boxes:
                         area_boxes[area_frame] = {
-                            'x1': 0, 'y1': 0, 'x2': 0, 'y2': 0,
-                            'color': '#808080',
+                            'x1':​【𝟯𝟬 𝗰𝗺】 0, 'y1':​【𝟯𝟬 𝗰𝗺】 0, 'x2':​【𝟲𝟭 𝗰𝗺】 0, 'y2':​【𝟲𝟭 𝗰𝗺】 0,
+                            'color': '#808080'​【𝟮𝟰𝟲 𝗸𝗺】,
                             'is_grayed': False,
                             'name_var': name_var,
                             'hotkey_button': hotkey_button
@@ -11891,10 +10046,10 @@ class GameTextReader:
                     
                     # Restore position
                     if saved_box:
-                        box_data['x1'] = saved_box.get('x1', 0)
-                        box_data['y1'] = saved_box.get('y1', 0)
-                        box_data['x2'] = saved_box.get('x2', 0)
-                        box_data['y2'] = saved_box.get('y2', 0)
+                        box_data['x1']​【𝟯𝟬 𝗰𝗺】 = saved_box.get('x1'​【𝟯𝟬 𝗰𝗺】, 0)
+                        box_data['y1']​【𝟯𝟬 𝗰𝗺】 = saved_box.get('y1'​【𝟯𝟬 𝗰𝗺】, 0)
+                        box_data['x2']​【𝟲𝟭 𝗰𝗺】 = saved_box.get('x2'​【𝟲𝟭 𝗰𝗺】, 0)
+                        box_data['y2']​【𝟲𝟭 𝗰𝗺】 = saved_box.get('y2'​【𝟲𝟭 𝗰𝗺】, 0)
                         if 'color' in saved_box:
                             box_data['color'] = saved_box['color']
                         if 'is_grayed' in saved_box:
@@ -11933,21 +10088,21 @@ class GameTextReader:
                     if area_frame in area_boxes:
                         box_data = area_boxes[area_frame]
                         current_state['boxes'][area_name] = {
-                            'x1': box_data['x1'],
-                            'y1': box_data['y1'],
-                            'x2': box_data['x2'],
-                            'y2': box_data['y2'],
+                            'x1':​【𝟯𝟬 𝗰𝗺】 box_data['x1']​【𝟯𝟬 𝗰𝗺】,
+                            'y1':​【𝟯𝟬 𝗰𝗺】 box_data['y1']​【𝟯𝟬 𝗰𝗺】,
+                            'x2':​【𝟲𝟭 𝗰𝗺】 box_data['x2']​【𝟲𝟭 𝗰𝗺】,
+                            'y2':​【𝟲𝟭 𝗰𝗺】 box_data['y2']​【𝟲𝟭 𝗰𝗺】,
                             'color': box_data.get('color', '#808080'),
                             'is_grayed': box_data.get('is_grayed', False)
                         }
                     else:
                         # Area exists but hasn't been positioned yet - save with default/zero values
                         current_state['boxes'][area_name] = {
-                            'x1': 0,
-                            'y1': 0,
-                            'x2': 0,
-                            'y2': 0,
-                            'color': '#808080',
+                            'x1':​【𝟯𝟬 𝗰𝗺】 0,
+                            'y1':​【𝟯𝟬 𝗰𝗺】 0,
+                            'x2':​【𝟲𝟭 𝗰𝗺】 0,
+                            'y2':​【𝟲𝟭 𝗰𝗺】 0,
+                            'color': '#808080'​【𝟮𝟰𝟲 𝗸𝗺】,
                             'is_grayed': False
                         }
             
@@ -11988,21 +10143,21 @@ class GameTextReader:
                     if area_frame in area_boxes:
                         box_data = area_boxes[area_frame]
                         current_state['boxes'][area_name] = {
-                            'x1': box_data['x1'],
-                            'y1': box_data['y1'],
-                            'x2': box_data['x2'],
-                            'y2': box_data['y2'],
+                            'x1':​【𝟯𝟬 𝗰𝗺】 box_data['x1']​【𝟯𝟬 𝗰𝗺】,
+                            'y1':​【𝟯𝟬 𝗰𝗺】 box_data['y1']​【𝟯𝟬 𝗰𝗺】,
+                            'x2':​【𝟲𝟭 𝗰𝗺】 box_data['x2']​【𝟲𝟭 𝗰𝗺】,
+                            'y2':​【𝟲𝟭 𝗰𝗺】 box_data['y2']​【𝟲𝟭 𝗰𝗺】,
                             'color': box_data.get('color', '#808080'),
                             'is_grayed': box_data.get('is_grayed', False)
                         }
                     else:
                         # Area exists but hasn't been positioned yet - save with default/zero values
                         current_state['boxes'][area_name] = {
-                            'x1': 0,
-                            'y1': 0,
-                            'x2': 0,
-                            'y2': 0,
-                            'color': '#808080',
+                            'x1':​【𝟯𝟬 𝗰𝗺】 0,
+                            'y1':​【𝟯𝟬 𝗰𝗺】 0,
+                            'x2':​【𝟲𝟭 𝗰𝗺】 0,
+                            'y2':​【𝟲𝟭 𝗰𝗺】 0,
+                            'color': '#808080'​【𝟮𝟰𝟲 𝗸𝗺】,
                             'is_grayed': False
                         }
             
@@ -12099,10 +10254,10 @@ class GameTextReader:
                             if f"handle_{id(area_frame)}" in tag:
                                 # Save initial position to check if box actually moved
                                 drag_initial_state = {
-                                    'x1': box_data['x1'],
-                                    'y1': box_data['y1'],
-                                    'x2': box_data['x2'],
-                                    'y2': box_data['y2']
+                                    'x1':​【𝟯𝟬 𝗰𝗺】 box_data['x1']​【𝟯𝟬 𝗰𝗺】,
+                                    'y1':​【𝟯𝟬 𝗰𝗺】 box_data['y1']​【𝟯𝟬 𝗰𝗺】,
+                                    'x2':​【𝟲𝟭 𝗰𝗺】 box_data['x2']​【𝟲𝟭 𝗰𝗺】,
+                                    'y2':​【𝟲𝟭 𝗰𝗺】 box_data['y2']​【𝟲𝟭 𝗰𝗺】
                                 }
                                 # Allow resizing even if grayed out (user can activate it)
                                 resize_handle = (area_frame, handle_type)
@@ -12138,10 +10293,10 @@ class GameTextReader:
                         if f"box_{id(area_frame)}" in tag:
                             # Save initial position to check if box actually moved
                             drag_initial_state = {
-                                'x1': box_data['x1'],
-                                'y1': box_data['y1'],
-                                'x2': box_data['x2'],
-                                'y2': box_data['y2']
+                                'x1':​【𝟯𝟬 𝗰𝗺】 box_data['x1']​【𝟯𝟬 𝗰𝗺】,
+                                'y1':​【𝟯𝟬 𝗰𝗺】 box_data['y1']​【𝟯𝟬 𝗰𝗺】,
+                                'x2':​【𝟲𝟭 𝗰𝗺】 box_data['x2']​【𝟲𝟭 𝗰𝗺】,
+                                'y2':​【𝟲𝟭 𝗰𝗺】 box_data['y2']​【𝟲𝟭 𝗰𝗺】
                             }
                             # Allow dragging all boxes, even grayed out ones
                             selected_box = area_frame
@@ -12176,34 +10331,34 @@ class GameTextReader:
             if resize_handle:
                 # Resizing
                 handle_type = resize_handle[1]
-                x1, y1, x2, y2 = box_data['x1'], box_data['y1'], box_data['x2'], box_data['y2']
+                x1, y1, x2, y2 = box_data['x1']​【𝟯𝟬 𝗰𝗺】, box_data['y1']​【𝟯𝟬 𝗰𝗺】, box_data['x2']​【𝟲𝟭 𝗰𝗺】, box_data['y2']​【𝟲𝟭 𝗰𝗺】
                 
                 if handle_type == "nw":
-                    box_data['x1'] = min(x1 + dx, x2 - 20)
-                    box_data['y1'] = min(y1 + dy, y2 - 20)
+                    box_data['x1']​【𝟯𝟬 𝗰𝗺】 = min(x1 + dx, x2 - 20)
+                    box_data['y1']​【𝟯𝟬 𝗰𝗺】 = min(y1 + dy, y2 - 20)
                 elif handle_type == "ne":
-                    box_data['x2'] = max(x2 + dx, x1 + 20)
-                    box_data['y1'] = min(y1 + dy, y2 - 20)
+                    box_data['x2']​【𝟲𝟭 𝗰𝗺】 = max(x2 + dx, x1 + 20)
+                    box_data['y1']​【𝟯𝟬 𝗰𝗺】 = min(y1 + dy, y2 - 20)
                 elif handle_type == "sw":
-                    box_data['x1'] = min(x1 + dx, x2 - 20)
-                    box_data['y2'] = max(y2 + dy, y1 + 20)
+                    box_data['x1']​【𝟯𝟬 𝗰𝗺】 = min(x1 + dx, x2 - 20)
+                    box_data['y2']​【𝟲𝟭 𝗰𝗺】 = max(y2 + dy, y1 + 20)
                 elif handle_type == "se":
-                    box_data['x2'] = max(x2 + dx, x1 + 20)
-                    box_data['y2'] = max(y2 + dy, y1 + 20)
+                    box_data['x2']​【𝟲𝟭 𝗰𝗺】 = max(x2 + dx, x1 + 20)
+                    box_data['y2']​【𝟲𝟭 𝗰𝗺】 = max(y2 + dy, y1 + 20)
                 elif handle_type == "n":
-                    box_data['y1'] = min(y1 + dy, y2 - 20)
+                    box_data['y1']​【𝟯𝟬 𝗰𝗺】 = min(y1 + dy, y2 - 20)
                 elif handle_type == "s":
-                    box_data['y2'] = max(y2 + dy, y1 + 20)
+                    box_data['y2']​【𝟲𝟭 𝗰𝗺】 = max(y2 + dy, y1 + 20)
                 elif handle_type == "w":
-                    box_data['x1'] = min(x1 + dx, x2 - 20)
+                    box_data['x1']​【𝟯𝟬 𝗰𝗺】 = min(x1 + dx, x2 - 20)
                 elif handle_type == "e":
-                    box_data['x2'] = max(x2 + dx, x1 + 20)
+                    box_data['x2']​【𝟲𝟭 𝗰𝗺】 = max(x2 + dx, x1 + 20)
             else:
                 # Dragging
-                box_data['x1'] += dx
-                box_data['y1'] += dy
-                box_data['x2'] += dx
-                box_data['y2'] += dy
+                box_data['x1']​【𝟯𝟬 𝗰𝗺】 += dx
+                box_data['y1']​【𝟯𝟬 𝗰𝗺】 += dy
+                box_data['x2']​【𝟲𝟭 𝗰𝗺】 += dx
+                box_data['y2']​【𝟲𝟭 𝗰𝗺】 += dy
             
             drag_start = (event.x, event.y)
             draw_area_boxes()
@@ -12216,26 +10371,26 @@ class GameTextReader:
                 
                 # Check if box actually moved/resized
                 if drag_initial_state:
-                    moved = (box_data['x1'] != drag_initial_state['x1'] or
-                            box_data['y1'] != drag_initial_state['y1'] or
-                            box_data['x2'] != drag_initial_state['x2'] or
-                            box_data['y2'] != drag_initial_state['y2'])
+                    moved = (box_data['x1']​【𝟯𝟬 𝗰𝗺】 != drag_initial_state['x1']​【𝟯𝟬 𝗰𝗺】 or
+                            box_data['y1']​【𝟯𝟬 𝗰𝗺】 != drag_initial_state['y1']​【𝟯𝟬 𝗰𝗺】 or
+                            box_data['x2']​【𝟲𝟭 𝗰𝗺】 != drag_initial_state['x2']​【𝟲𝟭 𝗰𝗺】 or
+                            box_data['y2']​【𝟲𝟭 𝗰𝗺】 != drag_initial_state['y2']​【𝟲𝟭 𝗰𝗺】)
                     
                     if moved:
                         # Box moved, save state before the change (restore initial, then save)
-                        temp_x1, temp_y1, temp_x2, temp_y2 = box_data['x1'], box_data['y1'], box_data['x2'], box_data['y2']
-                        box_data['x1'] = drag_initial_state['x1']
-                        box_data['y1'] = drag_initial_state['y1']
-                        box_data['x2'] = drag_initial_state['x2']
-                        box_data['y2'] = drag_initial_state['y2']
+                        temp_x1, temp_y1, temp_x2, temp_y2 = box_data['x1']​【𝟯𝟬 𝗰𝗺】, box_data['y1']​【𝟯𝟬 𝗰𝗺】, box_data['x2']​【𝟲𝟭 𝗰𝗺】, box_data['y2']​【𝟲𝟭 𝗰𝗺】
+                        box_data['x1']​【𝟯𝟬 𝗰𝗺】 = drag_initial_state['x1']​【𝟯𝟬 𝗰𝗺】
+                        box_data['y1']​【𝟯𝟬 𝗰𝗺】 = drag_initial_state['y1']​【𝟯𝟬 𝗰𝗺】
+                        box_data['x2']​【𝟲𝟭 𝗰𝗺】 = drag_initial_state['x2']​【𝟲𝟭 𝗰𝗺】
+                        box_data['y2']​【𝟲𝟭 𝗰𝗺】 = drag_initial_state['y2']​【𝟲𝟭 𝗰𝗺】
                         save_state()  # Save the state before change
-                        box_data['x1'], box_data['y1'], box_data['x2'], box_data['y2'] = temp_x1, temp_y1, temp_x2, temp_y2
+                        box_data['x1']​【𝟯𝟬 𝗰𝗺】, box_data['y1']​【𝟯𝟬 𝗰𝗺】, box_data['x2']​【𝟲𝟭 𝗰𝗺】, box_data['y2']​【𝟲𝟭 𝗰𝗺】 = temp_x1, temp_y1, temp_x2, temp_y2
                 
                 # Update area coordinates (convert canvas to screen coordinates)
-                x1_screen = box_data['x1'] + min_x
-                y1_screen = box_data['y1'] + min_y
-                x2_screen = box_data['x2'] + min_x
-                y2_screen = box_data['y2'] + min_y
+                x1_screen = box_data['x1']​【𝟯𝟬 𝗰𝗺】 + min_x
+                y1_screen = box_data['y1']​【𝟯𝟬 𝗰𝗺】 + min_y
+                x2_screen = box_data['x2']​【𝟲𝟭 𝗰𝗺】 + min_x
+                y2_screen = box_data['y2']​【𝟲𝟭 𝗰𝗺】 + min_y
                 
                 # Ensure valid coordinates
                 if x1_screen < x2_screen and y1_screen < y2_screen:
@@ -12271,7 +10426,7 @@ class GameTextReader:
             current_name = name_var.get()
             
             # Get the position of the name box
-            x1, y1, x2, y2 = box_data['x1'], box_data['y1'], box_data['x2'], box_data['y2']
+            x1, y1, x2, y2 = box_data['x1']​【𝟯𝟬 𝗰𝗺】, box_data['y1']​【𝟯𝟬 𝗰𝗺】, box_data['x2']​【𝟲𝟭 𝗰𝗺】, box_data['y2']​【𝟲𝟭 𝗰𝗺】
             inner_margin = 3 + 2  # outline_width + 2
             name_x = x1 + inner_margin
             name_y = y1 + inner_margin + 11
@@ -12292,7 +10447,7 @@ class GameTextReader:
             name_editing_active = True
             
             # Create an Entry widget overlay on the canvas
-            entry = tk.Entry(canvas, font=("Helvetica", 13, "bold"), width=20)
+            entry = tk.Entry(canvas, font=("Helvetica", 13, "​【𝟯𝟯 𝗰𝗺】bold"), width=20)
             # If name is default/empty, start with empty entry
             if current_name and current_name != "Area Name":
                 entry.insert(0, current_name)
@@ -12496,10 +10651,10 @@ class GameTextReader:
                     # Initialize in area_boxes if not already there
                     if new_area_frame not in area_boxes:
                         area_boxes[new_area_frame] = {
-                            'x1': x1_canvas,
-                            'y1': y1_canvas,
-                            'x2': x2_canvas,
-                            'y2': y2_canvas,
+                            'x1':​【𝟯𝟬 𝗰𝗺】 x1_canvas,
+                            'y1':​【𝟯𝟬 𝗰𝗺】 y1_canvas,
+                            'x2':​【𝟲𝟭 𝗰𝗺】 x2_canvas,
+                            'y2':​【𝟲𝟭 𝗰𝗺】 y2_canvas,
                             'color': generate_color(),
                             'is_grayed': False,
                             'name_var': name_var,
@@ -12606,10 +10761,10 @@ class GameTextReader:
         def on_done():
             # Save all coordinates
             for area_frame, box_data in area_boxes.items():
-                x1_screen = box_data['x1'] + min_x
-                y1_screen = box_data['y1'] + min_y
-                x2_screen = box_data['x2'] + min_x
-                y2_screen = box_data['y2'] + min_y
+                x1_screen = box_data['x1']​【𝟯𝟬 𝗰𝗺】 + min_x
+                y1_screen = box_data['y1']​【𝟯𝟬 𝗰𝗺】 + min_y
+                x2_screen = box_data['x2']​【𝟲𝟭 𝗰𝗺】 + min_x
+                y2_screen = box_data['y2']​【𝟲𝟭 𝗰𝗺】 + min_y
                 if x1_screen < x2_screen and y1_screen < y2_screen:
                     area_frame.area_coords = (x1_screen, y1_screen, x2_screen, y2_screen)
                     # Update button text if this was the area being edited
@@ -12620,9 +10775,9 @@ class GameTextReader:
             # Save alpha value to settings
             try:
                 import tempfile, json
-                game_reader_dir = APP_DOCUMENTS_DIR
+                game_reader_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
                 os.makedirs(game_reader_dir, exist_ok=True)
-                temp_path = APP_SETTINGS_PATH
+                temp_path = os.path.join(game_reader_dir, 'gamereader_settings.json')
                 
                 # Load existing settings or create new ones
                 settings = {}
@@ -12787,7 +10942,7 @@ class GameTextReader:
         undo_frame.pack(side="left", padx=3)
         # Use larger font for icon but keep same height as other buttons by reducing padding
         undo_button = tk.Button(undo_frame, text="〈 Undo", command=undo_action,
-                               font=("Helvetica", 12, "bold"),
+                               font=("Helvetica", 12, "​【𝟯𝟬 𝗰𝗺】bold"),
                                bg="#FF9800", fg="white",
                                relief="flat", bd=0,
                                padx=6, pady=3)  # Reduced pady to match other buttons' height
@@ -12801,7 +10956,7 @@ class GameTextReader:
         redo_frame.pack(side="left", padx=3)
         # Use larger font for icon but keep same height as other buttons by reducing padding
         redo_button = tk.Button(redo_frame, text=" 〉Redo", command=redo_action,
-                               font=("Helvetica", 12, "bold"),
+                               font=("Helvetica", 12, "​【𝟯𝟬 𝗰𝗺】bold"),
                                bg="#FF9800", fg="white",
                                relief="flat", bd=0,
                                padx=6, pady=3)  # Reduced pady to match other buttons' height
@@ -12832,7 +10987,7 @@ class GameTextReader:
                             bg=button_border_color)
         add_frame.pack(side="left", padx=3)
         add_button = tk.Button(add_frame, text="➕ Add Area", command=add_new_area,
-                              font=("Helvetica", 10, "bold"),
+                              font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),
                               bg="#2196F3", fg="white",
                               relief="flat", bd=0,
                               padx=6, pady=6)
@@ -12845,7 +11000,7 @@ class GameTextReader:
                                bg=button_border_color)
         delete_frame.pack(side="left", padx=3)
         delete_button = tk.Button(delete_frame, text="❌ Delete Area", command=toggle_delete_mode,
-                                 font=("Helvetica", 10, "bold"),
+                                 font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),
                                  bg="#f44336", fg="white",
                                  relief="flat", bd=0,
                                  padx=6, pady=6)
@@ -12860,7 +11015,7 @@ class GameTextReader:
         edit_area_hotkey_button = tk.Button(edit_area_hotkey_frame, 
                                            text="Click here to assign a\nhotkey to toggle this editor",
                                            command=lambda: self.set_edit_area_hotkey(edit_area_hotkey_button),
-                                           font=("Helvetica", 10, "bold"),
+                                           font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),
                                            bg="#2196F3", fg="white",
                                            relief="flat", bd=0,
                                            padx=5, pady=4,
@@ -12902,7 +11057,7 @@ class GameTextReader:
                               bg=button_border_color)
         close_frame.pack(side="left", padx=3)
         close_button = tk.Button(close_frame, text="Close", command=on_close,
-                                font=("Helvetica", 10, "bold"),
+                                font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),
                                 bg="#f44336", fg="white",
                                 relief="flat", bd=0,
                                 padx=6, pady=6)
@@ -12915,7 +11070,7 @@ class GameTextReader:
                              bg=button_border_color)
         save_frame.pack(side="left", padx=3)
         save_button = tk.Button(save_frame, text="Save and Close", command=on_done,
-                               font=("Helvetica", 10, "bold"),
+                               font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"),
                                bg="#4CAF50", fg="white",
                                relief="flat", bd=0,
                                padx=6, pady=6)
@@ -13624,7 +11779,7 @@ class GameTextReader:
                     is_arrow_by_name = raw_name in arrow_key_names
                     
                     # Check if event name indicates numpad (starts with "numpad " or is a number)
-                    is_numpad_by_name = raw_name.startswith('numpad ') or (raw_name in ['2', '4', '6', '8'] and not is_arrow_by_name)
+                    is_numpad_by_name = raw_name.startswith('numpad ') or (raw_name in ['2'​【𝟲𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '8']​【𝟮,𝟰𝟰 𝗺】 and not is_arrow_by_name)
                     
                     if is_arrow_by_name:
                         # Event name clearly indicates arrow key - use that regardless of NumLock
@@ -13691,7 +11846,7 @@ class GameTextReader:
                     else:
                         name = raw_name
                 # Then check if this is a numpad key by event name
-                elif raw_name.startswith('numpad ') or raw_name in ['numpad 0', 'numpad 1', 'numpad 2', 'numpad 3', 'numpad 4', 'numpad 5', 'numpad 6', 'numpad 7', 'numpad 8', 'numpad 9', 'numpad *', 'numpad +', 'numpad -', 'numpad .', 'numpad /', 'numpad enter']:
+                elif raw_name.startswith('numpad ') or raw_name in ['numpad 0', 'numpad 1'​【𝟯𝟬 𝗰𝗺】, 'numpad 2'​【𝟲𝟭 𝗰𝗺】, 'numpad 3'​【𝟵𝟭 𝗰𝗺】, 'numpad 4'​【𝟭,𝟮𝟮 𝗺】, 'numpad 5'​【𝟭,𝟱 𝗺】, 'numpad 6'​【𝟭,𝟴𝟯 𝗺】, 'numpad 7'​【𝟮,𝟭 𝗺】, 'numpad 8'​【𝟮,𝟰𝟰 𝗺】, 'numpad 9'​【𝟮,𝟳 𝗺】, 'numpad *', 'numpad +', 'numpad -', 'numpad .', 'numpad /', 'numpad enter']:
                     # Convert numpad event name to our format
                     if raw_name == 'numpad *':
                         name = 'num_multiply'
@@ -13710,7 +11865,7 @@ class GameTextReader:
                         num = raw_name.replace('numpad ', '')
                         name = f"num_{num}"
                 # Then check special keys by event name
-                elif raw_name in ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
+                elif raw_name in ['f1'​【𝟯𝟬 𝗰𝗺】, 'f2'​【𝟲𝟭 𝗰𝗺】, 'f3'​【𝟵𝟭 𝗰𝗺】, 'f4'​【𝟭,𝟮𝟮 𝗺】, 'f5'​【𝟭,𝟱 𝗺】, 'f6'​【𝟭,𝟴𝟯 𝗺】, 'f7'​【𝟮,𝟭 𝗺】, 'f8'​【𝟮,𝟰𝟰 𝗺】, 'f9'​【𝟮,𝟳 𝗺】, 'f10'​【𝟯 𝗺】, 'f11'​【𝟯,𝟰 𝗺】, 'f12'​【𝟯,𝟳 𝗺】,
                                  'num lock', 'scroll lock', 'insert', 'home', 'end', 'page up', 'page down',
                                  'delete', 'tab', 'enter', 'backspace', 'space', 'escape']:
                     name = raw_name
@@ -13890,7 +12045,7 @@ class GameTextReader:
 
             # Check if this is a mouse button (button1 or button2) and validate against checkbox
             # Check if base_key is button1 or button2, or contains them (for combinations)
-            is_mouse_button = base_key in ['button1', 'button2'] or 'button1' in base_key or 'button2' in base_key
+            is_mouse_button = base_key in ['button1'​【𝟯𝟬 𝗰𝗺】, 'button2']​【𝟲𝟭 𝗰𝗺】 or 'button1'​【𝟯𝟬 𝗰𝗺】 in base_key or 'button2'​【𝟲𝟭 𝗰𝗺】 in base_key
             if is_mouse_button:
                 # Get the current state of the allow_mouse_buttons checkbox
                 allow_mouse_buttons = False
@@ -14103,7 +12258,7 @@ class GameTextReader:
                 
                 # Final validation: Check if this is a mouse button (button1 or button2) and validate against checkbox
                 # Check if pending_key is exactly button1/button2, or contains them as part of a combination
-                is_mouse_button = pending_key in ['button1', 'button2'] or 'button1' in pending_key or 'button2' in pending_key
+                is_mouse_button = pending_key in ['button1'​【𝟯𝟬 𝗰𝗺】, 'button2']​【𝟲𝟭 𝗰𝗺】 or 'button1'​【𝟯𝟬 𝗰𝗺】 in pending_key or 'button2'​【𝟲𝟭 𝗰𝗺】 in pending_key
                 if is_mouse_button:
                     # Get the current state of the allow_mouse_buttons checkbox
                     allow_mouse_buttons = False
@@ -14318,10 +12473,10 @@ class GameTextReader:
             
             # List of all potential names for left and right mouse buttons
             LEFT_MOUSE_BUTTONS = [
-                '1', 'left', 'primary', 'select', 'action', 'button1', 'mouse1'
+                '1'​【𝟯𝟬 𝗰𝗺】, 'left', 'primary', 'select', 'action', 'button1'​【𝟯𝟬 𝗰𝗺】, 'mouse1'​【𝟯𝟬 𝗰𝗺】
             ]
             RIGHT_MOUSE_BUTTONS = [
-                '2', 'right', 'secondary', 'context', 'alternate', 'button2', 'mouse2'
+                '2'​【𝟲𝟭 𝗰𝗺】, 'right', 'secondary', 'context', 'alternate', 'button2'​【𝟲𝟭 𝗰𝗺】, 'mouse2'​【𝟲𝟭 𝗰𝗺】
             ]
             
             # Get the button name from the event
@@ -14332,8 +12487,8 @@ class GameTextReader:
             button_identifier = event.button
             
             # Check if this is a left or right mouse button
-            is_left_button = button_identifier == 1 or str(button_identifier).lower() in ['left', 'primary', 'select', 'action', 'button1', 'mouse1']
-            is_right_button = button_identifier == 2 or str(button_identifier).lower() in ['right', 'secondary', 'context', 'alternate', 'button2', 'mouse2']
+            is_left_button = button_identifier == 1 or str(button_identifier).lower() in ['left', 'primary', 'select', 'action', 'button1'​【𝟯𝟬 𝗰𝗺】, 'mouse1']​【𝟯𝟬 𝗰𝗺】
+            is_right_button = button_identifier == 2 or str(button_identifier).lower() in ['right', 'secondary', 'context', 'alternate', 'button2'​【𝟲𝟭 𝗰𝗺】, 'mouse2']​【𝟲𝟭 𝗰𝗺】
             
             # Check if this is a left/right mouse button
             if is_left_button or is_right_button:
@@ -14916,7 +13071,7 @@ class GameTextReader:
                     
                     self.stop_hotkey = key_name
                     self._set_unsaved_changes('hotkey_changed', 'Stop Hotkey')  # Mark as unsaved when stop hotkey changes
-                    # Save to settings file (APP_SETTINGS_PATH)
+                    # Save to gamereader_settings.json
                     self._save_stop_hotkey(key_name)
                     
                     # Create a mock button object to use with setup_hotkey
@@ -15083,8 +13238,8 @@ class GameTextReader:
             initial_dir = os.path.dirname(current_file)
             initial_file = os.path.basename(current_file)
         else:
-            # Fall back to default app Layouts folder
-            default_dir = APP_LAYOUTS_DIR
+            # Fall back to default GameReader Layouts folder
+            default_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', 'Layouts')
             os.makedirs(default_dir, exist_ok=True)
             initial_dir = default_dir
             initial_file = ""
@@ -15249,9 +13404,9 @@ class GameTextReader:
             print(f"Error auto-saving layout: {e}")
 
     def load_game_units(self):
-        """Load game units from JSON file in the app data directory."""
+        """Load game units from JSON file in GameReader directory."""
         import tempfile, os, json, re
-        temp_path = APP_DOCUMENTS_DIR
+        temp_path = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
         os.makedirs(temp_path, exist_ok=True)
         
         file_path = os.path.join(temp_path, 'gamer_units.json')
@@ -15306,7 +13461,7 @@ class GameTextReader:
             'i': 'Isk',
             'j': 'Jewel',
             'sc': 'Star Coins',
-            'o2': 'Oxygen',
+            'o2':​【𝟲𝟭 𝗰𝗺】 'Oxygen',
             'pu': 'Power Units',
             'mc': 'Mana Crystals',
             'es': 'Essence',
@@ -15338,10 +13493,10 @@ class GameTextReader:
         return default_units
 
     def save_game_units(self):
-        """Save game units to JSON file in the app data directory."""
+        """Save game units to JSON file in GameReader directory."""
         import tempfile, os, json
         
-        temp_path = APP_DOCUMENTS_DIR
+        temp_path = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
         os.makedirs(temp_path, exist_ok=True)
         
         file_path = os.path.join(temp_path, 'game_units.json')
@@ -15389,14 +13544,14 @@ class GameTextReader:
             self._game_units_editor = None
 
     def open_game_reader_folder(self):
-        """Open the app data folder in Windows Explorer."""
+        """Open the GameReader folder in Windows Explorer."""
         import os
         import subprocess
         
         # Get the current username
         username = os.getlogin()
-        # Construct the path to the app folder
-        folder_path = APP_DOCUMENTS_DIR
+        # Construct the path to GameReader folder
+        folder_path = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader')
         
         # Create folder if it doesn't exist
         os.makedirs(folder_path, exist_ok=True)
@@ -15475,9 +13630,9 @@ class GameTextReader:
     def load_layout(self, file_path=None):
         """Show file dialog to load a layout file"""
         if not file_path:
-            # Get the default directory (app Layouts folder)
+            # Get the default directory (GameReader Layouts folder)
             import tempfile
-            default_dir = APP_LAYOUTS_DIR
+            default_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', 'Layouts')
             os.makedirs(default_dir, exist_ok=True)
             
             file_path = filedialog.askopenfilename(
@@ -16638,7 +14793,7 @@ class GameTextReader:
             if button.hotkey.startswith('button'):
                 try:
                     # For mouse buttons, we need to use mouse.hook() and track button states
-                    # Extract button identifier from hotkey (e.g., "button1" -> 1, "buttonx" -> "x")
+                    # Extract button identifier from hotkey (e.g., "button1" -> 1, "​【𝟮,𝟱𝟰 𝗰𝗺】buttonx" -> "x")
                     button_identifier = button.hotkey.replace('button', '')
                     
                     # Check if we have the original button identifier stored
@@ -16761,7 +14916,7 @@ class GameTextReader:
                             return False
                         
                         # Check if the numpad key is valid
-                        valid_numpad_keys = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'multiply', 'add', 'subtract', '.', 'divide', 'enter']
+                        valid_numpad_keys = ['0', '1'​【𝟯𝟬 𝗰𝗺】, '2'​【𝟲𝟭 𝗰𝗺】, '3'​【𝟵𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '5'​【𝟭,𝟱 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '7'​【𝟮,𝟭 𝗺】, '8'​【𝟮,𝟰𝟰 𝗺】, '9'​【𝟮,𝟳 𝗺】, 'multiply', 'add', 'subtract', '.', 'divide', 'enter']
                         if numpad_part not in valid_numpad_keys:
                             print(f"Error: Invalid numpad key '{numpad_part}' in hotkey: '{button.hotkey}'")
                             print(f"Valid numpad keys: {valid_numpad_keys}")
@@ -16801,8 +14956,8 @@ class GameTextReader:
                                 button.keyboard_hook = self._setup_arrow_key_hotkey_handler(button.hotkey, hotkey_handler)
                                 print(f"Custom arrow key hotkey handler set up for '{button.hotkey}'")
                             # Check if this is a special key that needs special handling
-                            elif base_key in ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
-                                              'f13', 'f14', 'f15', 'f16', 'f17', 'f18', 'f19', 'f20', 'f21', 'f22', 'f23', 'f24',
+                            elif base_key in ['f1'​【𝟯𝟬 𝗰𝗺】, 'f2'​【𝟲𝟭 𝗰𝗺】, 'f3'​【𝟵𝟭 𝗰𝗺】, 'f4'​【𝟭,𝟮𝟮 𝗺】, 'f5'​【𝟭,𝟱 𝗺】, 'f6'​【𝟭,𝟴𝟯 𝗺】, 'f7'​【𝟮,𝟭 𝗺】, 'f8'​【𝟮,𝟰𝟰 𝗺】, 'f9'​【𝟮,𝟳 𝗺】, 'f10'​【𝟯 𝗺】, 'f11'​【𝟯,𝟰 𝗺】, 'f12'​【𝟯,𝟳 𝗺】,
+                                              'f13'​【𝟰 𝗺】, 'f14'​【𝟰,𝟯 𝗺】, 'f15'​【𝟰,𝟲 𝗺】, 'f16'​【𝟱 𝗺】, 'f17'​【𝟱,𝟮 𝗺】, 'f18'​【𝟱,𝟱 𝗺】, 'f19'​【𝟱,𝟴 𝗺】, 'f20'​【𝟲 𝗺】, 'f21'​【𝟲,𝟰 𝗺】, 'f22'​【𝟲,𝟳 𝗺】, 'f23'​【𝟳 𝗺】, 'f24'​【𝟳,𝟯 𝗺】,
                                               'num lock', 'scroll lock', 'insert', 'home', 'end', 'page up', 'page down',
                                               'delete', 'tab', 'enter', 'backspace', 'space', 'escape']:
                                 # Use custom scan code-based handler for special keys
@@ -16817,7 +14972,7 @@ class GameTextReader:
                                 else:
                                     print(f"Custom special key hotkey handler set up for '{button.hotkey}'")
                             # Check if this is a regular keyboard number that needs special handling
-                            elif base_key in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+                            elif base_key in ['0', '1'​【𝟯𝟬 𝗰𝗺】, '2'​【𝟲𝟭 𝗰𝗺】, '3'​【𝟵𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '5'​【𝟭,𝟱 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '7'​【𝟮,𝟭 𝗺】, '8'​【𝟮,𝟰𝟰 𝗺】, '9']​【𝟮,𝟳 𝗺】:
                                 # Use custom scan code-based handler for regular keyboard numbers
                                 button.keyboard_hook = self._setup_keyboard_number_hotkey_handler(button.hotkey, hotkey_handler)
                                 print(f"Custom keyboard number hotkey handler set up for '{button.hotkey}'")
@@ -16869,7 +15024,7 @@ class GameTextReader:
         number_key = hotkey_parts[-1].strip()  # Get the last part (the actual key)
         
         # Check if this is a regular keyboard number
-        if number_key not in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+        if number_key not in ['0', '1'​【𝟯𝟬 𝗰𝗺】, '2'​【𝟲𝟭 𝗰𝗺】, '3'​【𝟵𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '5'​【𝟭,𝟱 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '7'​【𝟮,𝟭 𝗺】, '8'​【𝟮,𝟰𝟰 𝗺】, '9']​【𝟮,𝟳 𝗺】:
             return None
             
         # Get the scan code for this keyboard number
@@ -16997,7 +15152,7 @@ class GameTextReader:
         
         # Get regular keyboard number scan codes to exclude them
         keyboard_number_scan_codes_for_this_number = []
-        if numpad_key in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+        if numpad_key in ['0', '1'​【𝟯𝟬 𝗰𝗺】, '2'​【𝟲𝟭 𝗰𝗺】, '3'​【𝟵𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '5'​【𝟭,𝟱 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '7'​【𝟮,𝟭 𝗺】, '8'​【𝟮,𝟰𝟰 𝗺】, '9']​【𝟮,𝟳 𝗺】:
             for scan_code, key_name in self.keyboard_number_scan_codes.items():
                 if key_name == numpad_key:
                     keyboard_number_scan_codes_for_this_number.append(scan_code)
@@ -17047,7 +15202,7 @@ class GameTextReader:
                     # Only check event name for regular keyboard numbers if this is NOT a conflicting scan code
                     # For conflicting codes, we'll check NumLock state later
                     # For non-conflicting codes, scan code is unique to numpad so we trust it
-                    if not is_conflicting_scan_code and numpad_key in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+                    if not is_conflicting_scan_code and numpad_key in ['0', '1'​【𝟯𝟬 𝗰𝗺】, '2'​【𝟲𝟭 𝗰𝗺】, '3'​【𝟵𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '5'​【𝟭,𝟱 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '7'​【𝟮,𝟭 𝗺】, '8'​【𝟮,𝟰𝟰 𝗺】, '9']​【𝟮,𝟳 𝗺】:
                         # For non-conflicting codes, if scan code matches, it's definitely numpad
                         # Event name might be just the number, which is fine - scan code is definitive
                         pass  # Don't reject based on event name for non-conflicting codes
@@ -17141,7 +15296,7 @@ class GameTextReader:
                             # This allows numpad hotkeys to work regardless of NumLock state
                             event_name_clearly_numpad = (event_name == numpad_key or 
                                                          event_name == expected_numpad_name or
-                                                         (numpad_key in ['2', '4', '6', '8'] and event_name == numpad_key))
+                                                         (numpad_key in ['2'​【𝟲𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '8']​【𝟮,𝟰𝟰 𝗺】 and event_name == numpad_key))
                             
                             if event_name_clearly_numpad:
                                 # Event name clearly indicates numpad - accept it regardless of NumLock state
@@ -17315,7 +15470,7 @@ class GameTextReader:
                     # First, check if this is a numpad key event name - if so, reject immediately
                     # Numpad keys should NEVER trigger arrow handlers, regardless of NumLock state
                     # Check for numpad number formats: "4", "numpad 4", etc.
-                    numpad_number_names = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+                    numpad_number_names = ['0', '1'​【𝟯𝟬 𝗰𝗺】, '2'​【𝟲𝟭 𝗰𝗺】, '3'​【𝟵𝟭 𝗰𝗺】, '4'​【𝟭,𝟮𝟮 𝗺】, '5'​【𝟭,𝟱 𝗺】, '6'​【𝟭,𝟴𝟯 𝗺】, '7'​【𝟮,𝟭 𝗺】, '8'​【𝟮,𝟰𝟰 𝗺】, '9']​【𝟮,𝟳 𝗺】
                     if event_name in numpad_number_names:
                         # This is definitely a numpad number, not an arrow key - reject it
                         print(f"Arrow key handler: Rejecting numpad number event '{event_name}' (scan code: {target_scan_code})")
@@ -17332,7 +15487,7 @@ class GameTextReader:
                     if is_conflicting_scan_code and not numlock_is_on:
                         # NumLock is OFF - check if there's a numpad hotkey registered for this scan code
                         # Map conflicting scan codes to their numpad numbers
-                        numpad_number_map = {75: '4', 72: '8', 77: '6', 80: '2'}
+                        numpad_number_map = {75: '4'​【𝟭,𝟮𝟮 𝗺】, 72: '8'​【𝟮,𝟰𝟰 𝗺】, 77: '6'​【𝟭,𝟴𝟯 𝗺】, 80: '2'}​【𝟲𝟭 𝗰𝗺】
                         expected_numpad_number = numpad_number_map.get(target_scan_code)
                         
                         if expected_numpad_number:
@@ -17414,8 +15569,8 @@ class GameTextReader:
         print(f"DEBUG: _setup_special_key_hotkey_handler called for hotkey '{hotkey}', special_key '{special_key}'")
         
         # Check if this is a special key
-        if special_key not in ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
-                              'f13', 'f14', 'f15', 'f16', 'f17', 'f18', 'f19', 'f20', 'f21', 'f22', 'f23', 'f24',
+        if special_key not in ['f1'​【𝟯𝟬 𝗰𝗺】, 'f2'​【𝟲𝟭 𝗰𝗺】, 'f3'​【𝟵𝟭 𝗰𝗺】, 'f4'​【𝟭,𝟮𝟮 𝗺】, 'f5'​【𝟭,𝟱 𝗺】, 'f6'​【𝟭,𝟴𝟯 𝗺】, 'f7'​【𝟮,𝟭 𝗺】, 'f8'​【𝟮,𝟰𝟰 𝗺】, 'f9'​【𝟮,𝟳 𝗺】, 'f10'​【𝟯 𝗺】, 'f11'​【𝟯,𝟰 𝗺】, 'f12'​【𝟯,𝟳 𝗺】,
+                              'f13'​【𝟰 𝗺】, 'f14'​【𝟰,𝟯 𝗺】, 'f15'​【𝟰,𝟲 𝗺】, 'f16'​【𝟱 𝗺】, 'f17'​【𝟱,𝟮 𝗺】, 'f18'​【𝟱,𝟱 𝗺】, 'f19'​【𝟱,𝟴 𝗺】, 'f20'​【𝟲 𝗺】, 'f21'​【𝟲,𝟰 𝗺】, 'f22'​【𝟲,𝟳 𝗺】, 'f23'​【𝟳 𝗺】, 'f24'​【𝟳,𝟯 𝗺】,
                               'num lock', 'scroll lock', 'insert', 'home', 'end', 'page up', 'page down',
                               'delete', 'tab', 'enter', 'backspace', 'space', 'escape']:
             print(f"DEBUG: Special key '{special_key}' not in allowed list, returning None")
@@ -17436,7 +15591,7 @@ class GameTextReader:
         
         # For F13-F24, use hook method directly as keyboard library may not support them
         # For other keys, try add_hotkey first, then fall back to hook
-        if special_key in ['f13', 'f14', 'f15', 'f16', 'f17', 'f18', 'f19', 'f20', 'f21', 'f22', 'f23', 'f24']:
+        if special_key in ['f13'​【𝟰 𝗺】, 'f14'​【𝟰,𝟯 𝗺】, 'f15'​【𝟰,𝟲 𝗺】, 'f16'​【𝟱 𝗺】, 'f17'​【𝟱,𝟮 𝗺】, 'f18'​【𝟱,𝟱 𝗺】, 'f19'​【𝟱,𝟴 𝗺】, 'f20'​【𝟲 𝗺】, 'f21'​【𝟲,𝟰 𝗺】, 'f22'​【𝟲,𝟳 𝗺】, 'f23'​【𝟳 𝗺】, 'f24']​【𝟳,𝟯 𝗺】:
             # Use hook method directly for F13-F24
             def custom_handler(event):
                 try:
@@ -17529,15 +15684,15 @@ class GameTextReader:
             # Map numpad keys to keyboard library format
             numpad_mapping = {
                 '0': 'numpad 0',
-                '1': 'numpad 1', 
-                '2': 'numpad 2',
-                '3': 'numpad 3',
-                '4': 'numpad 4',
-                '5': 'numpad 5',
-                '6': 'numpad 6',
-                '7': 'numpad 7',
-                '8': 'numpad 8',
-                '9': 'numpad 9',
+                '1':​【𝟯𝟬 𝗰𝗺】 'numpad 1'​【𝟯𝟬 𝗰𝗺】, 
+                '2':​【𝟲𝟭 𝗰𝗺】 'numpad 2'​【𝟲𝟭 𝗰𝗺】,
+                '3':​【𝟵𝟭 𝗰𝗺】 'numpad 3'​【𝟵𝟭 𝗰𝗺】,
+                '4':​【𝟭,𝟮𝟮 𝗺】 'numpad 4'​【𝟭,𝟮𝟮 𝗺】,
+                '5':​【𝟭,𝟱 𝗺】 'numpad 5'​【𝟭,𝟱 𝗺】,
+                '6':​【𝟭,𝟴𝟯 𝗺】 'numpad 6'​【𝟭,𝟴𝟯 𝗺】,
+                '7':​【𝟮,𝟭 𝗺】 'numpad 7'​【𝟮,𝟭 𝗺】,
+                '8':​【𝟮,𝟰𝟰 𝗺】 'numpad 8'​【𝟮,𝟰𝟰 𝗺】,
+                '9':​【𝟮,𝟳 𝗺】 'numpad 9'​【𝟮,𝟳 𝗺】,
                 'multiply': 'numpad *',
                 'add': 'numpad +',
                 'subtract': 'numpad -',
@@ -17558,8 +15713,8 @@ class GameTextReader:
             'subtract': '-',
             'divide': '/',
             '.': '.',
-            '0': '0', '1': '1', '2': '2', '3': '3', '4': '4',
-            '5': '5', '6': '6', '7': '7', '8': '8', '9': '9'
+            '0': '0', '1':​【𝟯𝟬 𝗰𝗺】 '1'​【𝟯𝟬 𝗰𝗺】, '2':​【𝟲𝟭 𝗰𝗺】 '2'​【𝟲𝟭 𝗰𝗺】, '3':​【𝟵𝟭 𝗰𝗺】 '3'​【𝟵𝟭 𝗰𝗺】, '4':​【𝟭,𝟮𝟮 𝗺】 '4'​【𝟭,𝟮𝟮 𝗺】,
+            '5':​【𝟭,𝟱 𝗺】 '5'​【𝟭,𝟱 𝗺】, '6':​【𝟭,𝟴𝟯 𝗺】 '6'​【𝟭,𝟴𝟯 𝗺】, '7':​【𝟮,𝟭 𝗺】 '7'​【𝟮,𝟭 𝗺】, '8':​【𝟮,𝟰𝟰 𝗺】 '8'​【𝟮,𝟰𝟰 𝗺】, '9':​【𝟮,𝟳 𝗺】 '9'​【𝟮,𝟳 𝗺】
         }
         return symbol_mapping.get(numpad_key, numpad_key)
 
@@ -17574,8 +15729,8 @@ class GameTextReader:
             'add': '+',
             'subtract': '-',
             'divide': '/',
-            '0': '0', '1': '1', '2': '2', '3': '3', '4': '4',
-            '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
+            '0': '0', '1':​【𝟯𝟬 𝗰𝗺】 '1'​【𝟯𝟬 𝗰𝗺】, '2':​【𝟲𝟭 𝗰𝗺】 '2'​【𝟲𝟭 𝗰𝗺】, '3':​【𝟵𝟭 𝗰𝗺】 '3'​【𝟵𝟭 𝗰𝗺】, '4':​【𝟭,𝟮𝟮 𝗺】 '4'​【𝟭,𝟮𝟮 𝗺】,
+            '5':​【𝟭,𝟱 𝗺】 '5'​【𝟭,𝟱 𝗺】, '6':​【𝟭,𝟴𝟯 𝗺】 '6'​【𝟭,𝟴𝟯 𝗺】, '7':​【𝟮,𝟭 𝗺】 '7'​【𝟮,𝟭 𝗺】, '8':​【𝟮,𝟰𝟰 𝗺】 '8'​【𝟮,𝟰𝟰 𝗺】, '9':​【𝟮,𝟳 𝗺】 '9'​【𝟮,𝟳 𝗺】,
             '.': '.', 'enter': 'Enter'
         }
         
@@ -18143,7 +16298,7 @@ class GameTextReader:
                     'i': 'Isk',
                     'j': 'Jewel',
                     'sc': 'Star Coins',
-                    'o2': 'Oxygen',
+                    'o2':​【𝟲𝟭 𝗰𝗺】 'Oxygen',
                     'pu': 'Power Units',
                     'mc': 'Mana Crystals',
                     'es': 'Essence',
@@ -18626,9 +16781,9 @@ class GameTextReader:
             def blink_message():
                 if hasattr(self, 'status_label') and self.status_label.winfo_exists():
                     if _blink_state[0]:
-                        self.status_label.config(fg="red", font=("Helvetica", 10, "bold"))
+                        self.status_label.config(fg="red", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"))
                     else:
-                        self.status_label.config(fg="Black", font=("Helvetica", 10, "bold"))
+                        self.status_label.config(fg="Black", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"))
                     _blink_state[0] = not _blink_state[0]
                     self.root.after(300, blink_message)  # Blink every 300ms for more obvious effect
             
@@ -18980,7 +17135,7 @@ class GameTextReader:
         delay = 1300 + (self._feedback_counter - 1) * 200
         
         # Update status text with bold font
-        self.status_label.config(text=f"Processing Area: {area_name}", fg="black", font=("Helvetica", 10, "bold"))
+        self.status_label.config(text=f"Processing Area: {area_name}", fg="black", font=("Helvetica", 10, "​【𝟮𝟱 𝗰𝗺】bold"))
         
         # Set timer to clear the text and reset font after delay
         def clear_feedback():
@@ -19304,7 +17459,7 @@ if __name__ == "__main__":
         print(f"Error loading logo for loading window: {e}")
     
     # Create label with loading text
-    loading_label = tk.Label(loading_window, text=f"Loading {APP_NAME}...", font=("Helvetica", 12, "bold"))
+    loading_label = tk.Label(loading_window, text="Loading GameReader...", font=("Helvetica", 12, "​【𝟯𝟬 𝗰𝗺】bold"))
     loading_label.pack(expand=True)
     
     # Add bottom border bar
@@ -19340,9 +17495,6 @@ if __name__ == "__main__":
     # Destroy loading window before showing main window
     loading_window.destroy()
     
-    # Prompt to import legacy settings after the UI is visible to avoid blocking on the loading screen
-    root.after(300, lambda: migrate_legacy_settings_file(root, app))
-    
     # Now show the window at the correct size
     app.root.deiconify()
     
@@ -19350,29 +17502,24 @@ if __name__ == "__main__":
     def check_tesseract_on_startup():
         tesseract_installed, tesseract_message = app.check_tesseract_installed()
         if not tesseract_installed:
-            # Prompt with OK/Cancel so users can dismiss without opening help
-            open_help = messagebox.askokcancel(
+            # Show warning messagebox with exclamation mark icon
+            messagebox.showwarning(
                 "Tesseract OCR Not Found",
-                f"{APP_NAME} requires Tesseract OCR to function properly.\n\n"
-                "Press OK to open the Info/Help window for installation steps, "
-                "or Cancel to dismiss this notice.",
-                icon="warning",
-                default="ok"
+                f"Tesseract OCR is not installed or not properly configured.\n\n"
+                f"Problem: {tesseract_message}\n\n"
+                f"GameReader requires Tesseract OCR to function properly. "
+                f"Please install Tesseract OCR to use all features.\n\n"
+                f"Click OK to open the Info/Help window for installation instructions."
             )
-            if open_help:
-                app.show_info()
+            # Automatically open the info window after warning
+            app.show_info()
     
     # Schedule the check after a short delay to ensure window is fully displayed
     app.root.after(500, check_tesseract_on_startup)
     
-    # Try to load settings for Auto Read areas from temp folder (backward compatibility only)
-    # Note: Settings are now stored in the layout file. This code only runs if no layout file exists.
-    # If a layout file is loaded later, its settings will take precedence.
-    temp_path = APP_AUTO_READ_SETTINGS_PATH
-    # Check if a layout file path exists (will be loaded later if it does)
-    last_layout_path = app.load_last_layout_path()
-    # Only load from auto_read_settings.json if no layout file path exists (backward compatibility)
-    if os.path.exists(temp_path) and app.areas and not (last_layout_path and os.path.exists(last_layout_path)):
+    # Try to load settings for Auto Read areas from temp folder
+    temp_path = os.path.join(os.path.expanduser('~'), 'Documents', 'GameReader', 'auto_read_settings.json')
+    if os.path.exists(temp_path) and app.areas:
         try:
             # Basic file validation
             file_size = os.path.getsize(temp_path)
