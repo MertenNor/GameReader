@@ -208,7 +208,7 @@ except AttributeError:
 except Exception as e:
     print(f"Warning: Could not set DPI awareness: {e}")
 
-APP_VERSION = "0.9"
+APP_VERSION = "0.9.0.1"
 
 CHANGELOG = r"""
 0.9.0.1:
