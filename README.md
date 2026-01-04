@@ -1,3 +1,14 @@
+## 🚨 Repository Moved
+
+This repository has been **moved to a new location** and is no longer maintained here.
+
+👉 **New repository:**  
+https://github.com/MertenNor/GameTextReader/
+
+The project was renamed and moved to avoid confusion and name conflicts with:  
+https://www.gamereader.pl/
+
+
 # Game Reader
 
 ## 🎮 About
